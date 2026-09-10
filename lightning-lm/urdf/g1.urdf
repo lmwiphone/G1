@@ -28,7 +28,7 @@
       LiDAR inversion is already handled in the driver.
     -->
     <origin
-      xyz="0.0002835 0.00003 1.30618"
+      xyz="0.0002835 0.00003 1.23618"
       rpy="0 0.04014257279586953 0"/>
   </joint>
 
