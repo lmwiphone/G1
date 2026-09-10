@@ -1,0 +1,88 @@
+collision_monitor:
+  ros__parameters:
+    use_sim_time: false
+    base_frame_id: "base_footprint"
+    odom_frame_id: "odom"
+    cmd_vel_in_topic: "/cmd_vel"
+    cmd_vel_out_topic: "/cmd_vel_safe"
+    state_topic: "collision_monitor_state"
+    transform_tolerance: 0.5
+    source_timeout: 5.0
+    base_shift_correction: True
+    stop_pub_timeout: 2.0
+    bond_heartbeat_period: 0.1
+    # Polygons represent zone geometry
+    polygons: ["FootprintApproach", "SafetyZone"]
+    FootprintApproach:
+      type: "polygon"
+      footprint_topic: "/local_costmap/published_footprint"
+      action_type: "approach"
+      min_points: 4
+      visualize: True
+      enabled: False  # 建图模式下local_costmap未激活，禁用此polygon避免延时
+      # Slow down when within this zone
+      approach_time_before_collision: 2.0  # time to collision (seconds)
+    SafetyZone:
+      type: "circle"
+      action_type: "approach"
+      radius: 0.23
+      visualize: True
+      enabled: True
+      # Allow backing away: only intervene when time-to-collision is small
+      approach_time_before_collision: 0.5
+    observation_sources: ["pointcloud1"]
+    pointcloud1:
+      type: "pointcloud"
+      topic: "/livox/points"
+      min_height: 0.05
+      max_height: 1.5
+      enabled: True
+      obstacles_angle: 1.5708  # 90 degrees, range of angles to check
+
+cloud_filter_up_rgbd_node:
+  ros__parameters:
+    use_sim_time: false
+    is_yaml_param: true
+    sub_map_topic: "global_map_cloud"
+    pub_frame: "base_footprint"    # base_footprint or front_livox
+    cloud_frame: "depth_camera_link_2"
+    sub_cloud_topic: "aurora_2/points2"   #/cloud_points_undistort_front
+    pub_cloud_topic: "aurora_2/points2_filted"
+    odom_topic: "/odom"
+    is_remove_ground: true
+    ground_thresh: 0.03  # 去除地面厚度
+    ground_curvature_threshold: 0.03  # 去除地面曲率阈值
+    curvature_k_search: 30  # 曲率法线估计邻域点数(KSearch)
+    is_filter_blind_area: true
+    
+    blind_area_max_point: [0.22, 0.22, 1.05]
+    blind_area_min_point: [-0.22, -0.22, 0.20]
+    is_filter_body_cloud: false
+    roi_max_point: [0.2, 0.05, 0.3]
+    roi_min_point: [-0.2, -0.05, 0.1]
+    voxel_grid_size: 0.025
+    diff_distance_threshold: 0.05
+    is_filter_ramp: false
+    ramp_voxel_grid_size: 0.05
+    pmf_cell_size: 0.025
+    pmf_max_window_size: 6
+    pmf_slope: 0.04
+    pmf_initial_distance: 0.005
+    pmf_max_distance: 0.025
+    base_max_x: 1.5  # 限定pub_frame 下的点云范围
+    base_max_y: 0.7
+    base_min_y: -0.7
+    rectangles: ["rectangle1","rectangle2"]
+    rectangle1:
+      x_min: 47.2
+      z_min: -2.0
+      x_max: 53.0
+      y_max: 14.0
+      z_max: 1.5
+    rectangle2:
+      x_min: 13.1
+      y_min: 38.3
+      z_min: 0.0
+      x_max: 17.8
+      y_max: 63.7
+      z_max: 3.0

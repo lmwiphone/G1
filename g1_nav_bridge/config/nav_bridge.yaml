@@ -1,0 +1,15 @@
+g1_cmdvel_to_sport:
+  ros__parameters:
+    cmd_vel_topic: /cmd_vel_safe
+    sport_request_topic: /api/sport/request
+    sport_response_topic: /api/sport/response
+    rate_hz: 30.0
+    timeout_s: 0.20
+    command_duration: 0.20
+    max_vx: 0.15
+    max_vy: 0.0
+    max_wz: 0.25
+    max_ax: 0.35
+    max_ay: 0.35
+    max_awz: 0.60
+    enabled_on_start: false

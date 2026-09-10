@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+<robot name="g1_navigation_sensors">
+
+  <!--
+    Planar navigation frame.
+    base_link is the robot rotation center projected onto the ground.
+  -->
+  <link name="base_link"/>
+
+  <link name="base_footprint"/>
+
+  <joint name="base_to_footprint_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="base_footprint"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+
+  <!-- MID360 -->
+  <link name="mid360_link"/>
+
+  <joint name="base_to_mid360_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="mid360_link"/>
+
+    <!--
+      MID360 height relative to the planar ground navigation frame.
+      LiDAR inversion is already handled in the driver.
+    -->
+    <origin
+      xyz="0.0002835 0.00003 1.30618"
+      rpy="0 0.04014257279586953 0"/>
+  </joint>
+
+
+  <!-- MID360 internal IMU -->
+  <link name="mid360_imu"/>
+
+  <joint name="mid360_to_imu_joint" type="fixed">
+    <parent link="mid360_link"/>
+    <child link="mid360_imu"/>
+
+    <origin
+      xyz="0.011 0.02329 -0.04412"
+      rpy="0 0 0"/>
+  </joint>
+
+</robot>
