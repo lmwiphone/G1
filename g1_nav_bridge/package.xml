@@ -2,15 +2,25 @@
 <package format="3">
   <name>g1_nav_bridge</name>
   <version>0.1.0</version>
-  <description>Safe Nav2 cmd_vel to Unitree G1 sport API bridge.</description>
+  <description>Safe Nav2 cmd_vel bridge using the official unitree_ros2 G1 LocoClient.</description>
   <maintainer email="robot@example.com">G1 team</maintainer>
   <license>Apache-2.0</license>
-  <buildtool_depend>ament_python</buildtool_depend>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <build_depend>ament_cmake_python</build_depend>
+  <depend>rclcpp</depend>
+  <depend>rmw</depend>
   <exec_depend>rclpy</exec_depend>
-  <exec_depend>geometry_msgs</exec_depend>
-  <exec_depend>std_srvs</exec_depend>
-  <exec_depend>unitree_api</exec_depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>unitree_api</depend>
+  <exec_depend>unitree_go</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>aid_navigation2</exec_depend>
   <export>
-    <build_type>ament_python</build_type>
+    <build_type>ament_cmake</build_type>
   </export>
 </package>

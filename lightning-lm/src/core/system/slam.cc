@@ -63,19 +63,19 @@ bool SlamSystem::Init(const std::string& yaml_path) {
             lc_->SetLoopClosedCB([this]() { g2p5_->RedrawGlobalMap(); });
         }
 
-        if (options_.with_2dvisualization_) {
-            g2p5_->SetMapUpdateCallback([this](g2p5::G2P5MapPtr map) {
-                cv::Mat image = map->ToCV();
-                cv::imshow("map", image);
+        // if (options_.with_2dvisualization_) {
+        //     g2p5_->SetMapUpdateCallback([this](g2p5::G2P5MapPtr map) {
+        //         cv::Mat image = map->ToCV();
+        //         cv::imshow("map", image);
 
-                if (options_.step_on_kf_) {
-                    cv::waitKey(0);
+        //         if (options_.step_on_kf_) {
+        //             cv::waitKey(0);
 
-                } else {
-                    cv::waitKey(10);
-                }
-            });
-        }
+        //         } else {
+        //             cv::waitKey(10);
+        //         }
+        //     });
+        // }
     }
 
     if (options_.online_mode_) {
@@ -83,6 +83,10 @@ bool SlamSystem::Init(const std::string& yaml_path) {
 
         /// subscribers
         node_ = std::make_shared<rclcpp::Node>("lightning_slam");
+        if (options_.with_gridmap_) {
+            map_pub_ = node_->create_publisher<nav_msgs::msg::OccupancyGrid>(
+                "/map", rclcpp::QoS(1).reliable().transient_local());
+        }
 
         imu_topic_ = yaml["common"]["imu_topic"].as<std::string>();
         cloud_topic_ = yaml["common"]["lidar_topic"].as<std::string>();
@@ -118,6 +122,33 @@ bool SlamSystem::Init(const std::string& yaml_path) {
                                          SaveMapService::Response::SharedPtr res) { SaveMap(req, res); });
 
         LOG(INFO) << "online slam node has been created.";
+    }
+
+    if (g2p5_) {
+        // A single callback serves both ROS and the optional OpenCV UI.
+        // Capture ROS handles by value: the asynchronous callback owns their lifetime.
+        auto publisher = map_pub_;
+        auto clock = node_ ? node_->get_clock() : rclcpp::Clock::SharedPtr{};
+        const bool show_ui = options_.with_2dvisualization_;
+        const bool step = options_.step_on_kf_;
+        g2p5_->SetMapUpdateCallback([publisher, clock, show_ui, step](g2p5::G2P5MapPtr map) {
+            if (!map) return;
+            if (publisher && clock && rclcpp::ok()) {
+                auto message = map->ToROS();
+                if (message.info.width > 0 && message.info.height > 0 && !message.data.empty()) {
+                    message.header.frame_id = "map";
+                    message.header.stamp = clock->now();  // Snapshot publication time.
+                    message.info.map_load_time = message.header.stamp;
+                    // ToROS supplies XY origin but leaves its quaternion at all zeros.
+                    message.info.origin.orientation.w = 1.0;
+                    publisher->publish(message);
+                }
+            }
+            if (show_ui) {
+                cv::imshow("map", map->ToCV());
+                cv::waitKey(step ? 0 : 10);
+            }
+        });
     }
 
     return true;

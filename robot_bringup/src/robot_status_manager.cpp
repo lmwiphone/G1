@@ -501,7 +501,13 @@ class StatusManagerNode : public rclcpp::Node {
  public:
   StatusManagerNode() : Node("robot_status_manager_node") {
     control_model_ = "idle";
-    node_ = rclcpp::Node::make_shared("robot_status_server_manager_node");
+    // launch_ros 通过全局 __node 重映射主节点名称。若辅助节点也读取全局
+    // 参数，它会被重映射成与主节点相同的名称，并触发重复 rosout publisher。
+    // 辅助节点只用于同步 service client，必须保留独立且稳定的节点名。
+    const auto client_node_options =
+        rclcpp::NodeOptions().use_global_arguments(false);
+    node_ = rclcpp::Node::make_shared(
+        "robot_status_server_manager_node", client_node_options);
     callback_group_ = node_->create_callback_group(
       rclcpp::CallbackGroupType::MutuallyExclusive,
       false);
@@ -549,8 +555,6 @@ class StatusManagerNode : public rclcpp::Node {
     motion_bridge_enable_client_ =
       node_->create_client<std_srvs::srv::SetBool>(
           "/g1_cmdvel_to_sport/enable");
-    start_launch_client_ =
-        node_->create_client<aid_robot_msgs::srv::ControlLaunch>("start_launch");
     start_launch_client_ = node_->create_client<aid_robot_msgs::srv::ControlLaunch>(
       "start_launch",
       rmw_qos_profile_services_default, 

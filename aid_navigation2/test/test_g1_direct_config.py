@@ -16,7 +16,8 @@ class G1ProfileTests(unittest.TestCase):
         self.stock = yaml.safe_load((ROOT/'param/nav2_params.yaml').read_text())
         self.collision = yaml.safe_load((SRC/'robot_bringup/param/collision_monitor_params.yaml').read_text())
         self.nav, self.safe = config.make_configs(self.stock, self.collision,
-            floor_z=-1.2, base_floor_z=-0.7, cloud_topic='/livox/points', sensor_frame='mid360_link')
+            floor_z=-1.2, base_floor_z=-0.7, cloud_topic='/livox/points', sensor_frame='mid360_link',
+            ros_distro='humble')
 
     def test_direct_frames(self):
         for name in ('local_costmap', 'global_costmap'):
@@ -46,9 +47,11 @@ class G1ProfileTests(unittest.TestCase):
             self.assertIn('keepout_layer', p['plugins'])
             self.assertEqual(p['keepout_layer'], self.stock[name][name]['ros__parameters']['keepout_layer'])
         self.assertEqual(self.nav['costmap_filter_info_server'], self.stock['costmap_filter_info_server'])
-        self.assertEqual(self.stock['local_costmap']['local_costmap']['ros__parameters']['robot_base_frame'], 'base_footprint')
+        self.assertEqual(self.stock['local_costmap']['local_costmap']['ros__parameters']['robot_base_frame'], 'base_link')
 
     def test_safe_topics_open_loop_limits(self):
+        for node in ('controller_server', 'bt_navigator'):
+            self.assertEqual(self.nav[node]['ros__parameters']['odom_topic'], '/odom')
         s = self.nav['velocity_smoother']['ros__parameters']
         self.assertEqual(s['feedback'], 'OPEN_LOOP')
         self.assertNotIn('odom_topic', s)
@@ -67,17 +70,33 @@ class G1ProfileTests(unittest.TestCase):
             config.make_configs(self.stock, self.collision, floor_z=float('nan'),
                                 base_floor_z=0, cloud_topic='/points', sensor_frame='lidar')
 
+    def test_jazzy_plugin_names(self):
+        nav, _ = config.make_configs(self.stock, self.collision, floor_z=-1.2,
+            base_floor_z=0, cloud_topic='/livox/points', sensor_frame='mid360_link', ros_distro='jazzy')
+        self.assertEqual(nav['planner_server']['ros__parameters']['GridBased']['plugin'],
+                         'nav2_smac_planner::SmacPlanner2D')
+        self.assertEqual(nav['behavior_server']['ros__parameters']['spin']['plugin'], 'nav2_behaviors::Spin')
+        self.assertNotIn('plugin_lib_names', nav['bt_navigator']['ros__parameters'])
+        self.assertEqual(nav['controller_server']['ros__parameters']['progress_checker_plugins'], ['progress_checker'])
+
+    def test_controller_envelope_and_humble_checker(self):
+        p = self.nav['controller_server']['ros__parameters']
+        self.assertEqual(p['progress_checker_plugin'], 'progress_checker')
+        self.assertAlmostEqual(p['FollowPath']['model_dt'], 1. / p['controller_frequency'])
+        self.assertEqual(p['FollowPath']['vx_max'], 0.15)
+        self.assertEqual(p['FollowPath']['wz_max'], 0.25)
+
     def test_launch_syntax_and_required_heights(self):
         for p in (ROOT/'launch').glob('*.py'):
             ast.parse(p.read_text())
         text = (ROOT/'launch/g1_navigation_direct.launch.py').read_text()
         self.assertIn("DeclareLaunchArgument('floor_z', description=", text)
-        self.assertIn("DeclareLaunchArgument('base_floor_z', description=", text)
+        self.assertIn("DeclareLaunchArgument('base_floor_z', default_value='0.0'", text)
         self.assertNotIn('static_transform_publisher', text)
         self.assertNotIn("package='lightning'", text)
 
     def test_reference_isolation_and_map_resolution(self):
-        self.assertTrue((SRC/'g1_nav_integration/COLCON_IGNORE').exists())
+        self.assertFalse((SRC/'g1_nav_integration').exists())
         source = (SRC/'lightning-lm/src/core/system/slam.cc').read_text()
         self.assertIn('YAML::Key << "resolution" << YAML::Value << map.info.resolution', source)
         self.assertNotIn('YAML::Key << "resolution" << YAML::Value << float(0.05)', source)

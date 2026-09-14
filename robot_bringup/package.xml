@@ -25,6 +25,9 @@
   <depend>std_srvs</depend>
   <depend>lightning</depend>
   <exec_depend>g1_nav_bridge</exec_depend>
+  <exec_depend>aid_navigation2</exec_depend>
+  <exec_depend>aid_robot_py</exec_depend>
+  <exec_depend>nav2_collision_monitor</exec_depend>
   <exec_depend>livox_ros_driver2</exec_depend>
   <exec_depend>usb_cam</exec_depend>
   <exec_depend>hls_lfcd_lds_driver</exec_depend>

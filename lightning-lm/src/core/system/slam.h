@@ -6,6 +6,7 @@
 #define LIGHTNING_SLAM_H
 
 #include <rclcpp/rclcpp.hpp>
+#include <nav_msgs/msg/occupancy_grid.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <string>
@@ -94,6 +95,7 @@ class SlamSystem {
 
     /// 实时模式下的ros2 node, subscribers
     rclcpp::Node::SharedPtr node_;
+    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr map_pub_;
     std::string imu_topic_;
     std::string cloud_topic_;
     std::string livox_topic_;

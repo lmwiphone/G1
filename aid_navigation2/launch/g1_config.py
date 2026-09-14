@@ -8,7 +8,7 @@ import math
 
 
 def make_configs(stock, collision, *, floor_z, base_floor_z, cloud_topic,
-                 sensor_frame, robot_radius=0.40):
+                 sensor_frame, robot_radius=0.250, ros_distro='jazzy'):
     if not all(math.isfinite(v) for v in (floor_z, base_floor_z, robot_radius)):
         raise ValueError('Ground heights and radius must be finite')
     if robot_radius <= 0 or not cloud_topic or not sensor_frame:
@@ -57,7 +57,22 @@ def make_configs(stock, collision, *, floor_z, base_floor_z, cloud_topic,
     behavior.update(local_frame='map', global_frame='map', enable_stamped_cmd_vel=False,
                     max_rotational_vel=0.25, min_rotational_vel=0.10, rotational_acc_lim=0.60)
     controller = nav['controller_server']['ros__parameters']
-    controller.update(enable_stamped_cmd_vel=False, min_y_velocity_threshold=0.001)
+    controller.update(enable_stamped_cmd_vel=False, min_y_velocity_threshold=0.001,
+                      odom_topic='/odom')
+    nav['bt_navigator']['ros__parameters']['odom_topic'] = '/odom'
+    # Jazzy 的标准插件名称变化；自定义 aid_costmap_plugin 的注册名保持不变。
+    if ros_distro not in ('humble', 'jazzy'):
+        raise ValueError('此配置目前只验证 Humble / Jazzy 参数分支')
+    if ros_distro == 'jazzy':
+        nav['planner_server']['ros__parameters']['GridBased']['plugin'] = 'nav2_smac_planner::SmacPlanner2D'
+        for key in behavior['behavior_plugins']:
+            behavior[key]['plugin'] = behavior[key]['plugin'].replace('nav2_behaviors/', 'nav2_behaviors::')
+        nav['bt_navigator']['ros__parameters'].pop('plugin_lib_names', None)
+        controller.pop('progress_checker_plugin', None)
+        controller['progress_checker_plugins'] = ['progress_checker']
+    else:
+        controller.pop('progress_checker_plugins', None)
+        controller['progress_checker_plugin'] = 'progress_checker'
     # Preserve the existing forward/turn-only command envelope, not a new lateral gait.
     controller['FollowPath'].update(vx_max=0.15, vx_min=0.0, vy_max=0.0,
                                      wz_max=0.25, visualize=False)
@@ -68,8 +83,7 @@ def make_configs(stock, collision, *, floor_z, base_floor_z, cloud_topic,
                   velocity_timeout=0.20)
     smooth.pop('odom_topic', None)
     smooth.pop('odom_duration', None)
-    # Controller/BT may still consume velocity observations depending on their implementation.
-    # We do not invent zero odometry or derive velocity from globally jumping TF here.
+    # Controller/BT use Unitree velocity feedback; smoother stays OPEN_LOOP until validated.
     safety = {'collision_monitor': deepcopy(collision['collision_monitor'])}
     c = safety['collision_monitor']['ros__parameters']
     c.update(use_sim_time=False, base_frame_id='base_link', odom_frame_id='map',

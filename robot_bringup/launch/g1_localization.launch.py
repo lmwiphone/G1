@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""G1 online localization using a saved Lightning-LM map directory."""
+"""原子化 G1 定位入口；Livox 驱动由 robot.launch.py 统一持有。"""
 
 import os
 
@@ -17,6 +17,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('map_dir'),
         DeclareLaunchArgument('with_ui', default_value='false'),
+        DeclareLaunchArgument('with_2dui', default_value='false'),
         DeclareLaunchArgument('start_rviz', default_value='false'),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(lightning_launch),
@@ -24,6 +25,7 @@ def generate_launch_description():
                 'start_livox': 'false',
                 'map_path': LaunchConfiguration('map_dir'),
                 'with_ui': LaunchConfiguration('with_ui'),
+                'with_2dui': LaunchConfiguration('with_2dui'),
                 'start_rviz': LaunchConfiguration('start_rviz'),
             }.items(),
         ),

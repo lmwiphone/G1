@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""G1 online mapping using Lightning-LM (sensor driver is system-owned)."""
+"""原子化 G1 建图入口；Livox 驱动由 robot.launch.py 统一持有。"""
 
 import os
 
@@ -15,14 +15,24 @@ def generate_launch_description():
         get_package_share_directory('lightning'), 'launch', 'g1_mapping.launch.py')
 
     return LaunchDescription([
+        DeclareLaunchArgument('map_dir', default_value='/opt/G1/lighting_ws/data/new_map'),
         DeclareLaunchArgument('with_ui', default_value='false'),
+        DeclareLaunchArgument('with_2dui', default_value='false'),
         DeclareLaunchArgument('start_rviz', default_value='false'),
+        DeclareLaunchArgument('floor_height', default_value=''),
+        DeclareLaunchArgument('min_obstacle_height', default_value=''),
+        DeclareLaunchArgument('max_obstacle_height', default_value=''),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(lightning_launch),
             launch_arguments={
                 'start_livox': 'false',
+                'map_path': LaunchConfiguration('map_dir'),
                 'with_ui': LaunchConfiguration('with_ui'),
+                'with_2dui': LaunchConfiguration('with_2dui'),
                 'start_rviz': LaunchConfiguration('start_rviz'),
+                'floor_height': LaunchConfiguration('floor_height'),
+                'min_obstacle_height': LaunchConfiguration('min_obstacle_height'),
+                'max_obstacle_height': LaunchConfiguration('max_obstacle_height'),
             }.items(),
         ),
     ])
