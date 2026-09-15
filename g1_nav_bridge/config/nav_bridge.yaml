@@ -1,8 +1,8 @@
 g1_cmdvel_to_sport:
   ros__parameters:
     cmd_vel_topic: /cmd_vel_safe
-    # 必须大于正常 cmd_vel 周期；断流后由本体在该时间后停止。
-    duration: 0.20
+    # 调用G1 LocoClient::SetVelocity，并由常驻response订阅异步检查本体返回码。
+    duration: 0.5
 
 g1_sport_to_odom:
   ros__parameters:

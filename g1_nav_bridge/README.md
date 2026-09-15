@@ -18,8 +18,10 @@ Nav2 参数仍由 `aid_navigation2` 管理，前端由原 `robot_bringup` 等包
 → /cmd_vel_safe → cmdvel_to_sport → 包内 G1LocoClient → /api/sport/request → G1`。
 G1 通过 `/api/sport/response` 返回调用结果。客户端代码已随本包保存，不再包含或搜索
 外部 `unitree_ros2` 头文件。ROS 回调只覆盖缓存最新速度并唤醒条件变量；独立工作线程
-调用同步的 `SetVelocity()`。处理期间到达多条命令时只发送最新值，不积压旧速度。
-`duration` 默认 0.20 s，必须大于正常 `/cmd_vel` 周期；话题断流后由机器人端在该
+调用 `SetVelocity()`。`BaseClient::Call()` 只发布请求并立即返回，不再每次创建订阅或等待
+5 秒；`cmdvel_to_sport` 使用常驻 `/api/sport/response` 订阅异步记录 7105 的本体返回码。
+处理期间到达多条命令时只发送最新值，不积压旧速度。
+`duration` 默认 0.50 s，必须大于正常 `/cmd_vel` 周期；话题断流后由机器人端在该
 有效期结束时停止。桥不再实现第二套使能、FSM、限速、状态或急停逻辑；这些由
 Nav2、collision monitor、机器人内置运控及硬件急停负责。NaN/Inf 被转换为零速。
 
