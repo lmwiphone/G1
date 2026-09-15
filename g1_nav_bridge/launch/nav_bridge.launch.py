@@ -23,7 +23,6 @@ def generate_launch_description():
             output='screen',
             parameters=[config, {
                 'cmd_vel_topic': LaunchConfiguration('cmd_vel_topic'),
-                'enabled_on_start': False,
             }],
         )
     ])

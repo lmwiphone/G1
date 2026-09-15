@@ -45,7 +45,9 @@ switched to this profile: measured heights must first be supplied and validated.
 controller/behaviors -> /cmd_vel_nav -> OPEN_LOOP velocity smoother -> /cmd_vel
 -> collision_monitor -> /cmd_vel_safe -> existing G1 command bridge.
 
-The existing command bridge still starts disabled and retains enable/stop APIs.
+The command bridge directly forwards each fresh Twist through Unitree API 7105.
+Stopping and mode gating must happen upstream; the robot also expires each command
+after the configured short duration.
 The collision monitor now uses a conservative fixed stop circle; missing/stale
 clouds must be checked during commissioning. Four points trigger the zone: this
 does not guarantee detection of sparse objects. No claims about certified safety.

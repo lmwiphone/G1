@@ -33,7 +33,9 @@ def setup(context):
         if value(argument):
             config['g2p5'][key] = float(value(argument))
     config['system'].update(with_ui=enabled('with_ui'), with_2dui=enabled('with_2dui'),
-                            map_path=os.path.abspath(value('map_path')))
+                            map_path=os.path.abspath(os.path.expanduser(value('map_path'))),
+                            map_save_root=os.path.abspath(
+                                os.path.expanduser(value('map_save_root'))))
     if mode == 'localization':
         map_index = os.path.join(config['system']['map_path'], 'index.txt')
         if not os.path.isfile(map_index):
@@ -78,7 +80,8 @@ def generate_launch_description():
     share = get_package_share_directory('lightning')
     defaults = dict(mode='mapping', urdf=os.path.join(share, 'urdf', 'g1.urdf'),
                     config=os.path.join(share, 'config', 'default_livox.yaml'),
-                    map_path='/opt/G1/maps/current/lightning',
+                    map_path=os.path.expanduser('~/maps/new_map'),
+                    map_save_root=os.path.expanduser('~/maps'),
                     lidar_topic='/livox/lidar', imu_topic='/livox/imu', start_livox='false',
                     with_ui='false', with_2dui='false', start_rviz='false',
                     rviz_config='',

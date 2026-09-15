@@ -45,9 +45,9 @@ class MapTransform(Node):
                     (img <= [150, 150, 150])).all(axis=2))] = [185, 125, 100]
         img[np.where((img > [150, 150, 150]).all(axis=2))] = [200, 145, 127]
 
-        retval, buffer = cv2.imencode('.webp', img)
+        retval, buffer = cv2.imencode('.jpg', img)
         if not retval:
-            self.get_logger().error("cv2.imencode failed!")
+            self.get_logger().error("JPEG encoding failed")
             return
 
         base64_data = base64.b64encode(buffer.tobytes())

@@ -61,8 +61,8 @@ class G1ProfileTests(unittest.TestCase):
         configs = list((SRC/'g1_nav_bridge/config').glob('*.yaml'))
         bridge = next(yaml.safe_load(p.read_text())['g1_cmdvel_to_sport']['ros__parameters']
                       for p in configs if 'g1_cmdvel_to_sport' in yaml.safe_load(p.read_text()))
-        self.assertFalse(bridge['enabled_on_start'])
         self.assertEqual(bridge['cmd_vel_topic'], '/cmd_vel_safe')
+        self.assertGreater(bridge['duration'], 0.0)
         self.assertEqual(s['max_velocity'], [0.15, 0.0, 0.25])
 
     def test_reject_missing_or_invalid_geometry(self):

@@ -3,6 +3,7 @@ import signal
 import subprocess
 import asyncio
 import threading
+import shlex
 import rclpy
 from rclpy.node import Node
 from aid_robot_msgs.srv import ControlLaunch, QueryLaunchStatus
@@ -72,7 +73,7 @@ class LaunchManagerNode(Node):
             cmd.append('use_sim_time:=false')
 
         if params:
-            cmd.append(params)
+            cmd.extend(shlex.split(params))
         try:
             process = subprocess.Popen(
                 cmd,

@@ -13,6 +13,7 @@
     <exec_depend>rosidl_default_runtime</exec_depend>
     <exec_depend>rclpy</exec_depend>
     <exec_depend>livox_ros_driver2</exec_depend>
+    <exec_depend>aid_robot_py</exec_depend>
     
     <depend>scrubber_common</depend>
     <depend>agibot_robot</depend>

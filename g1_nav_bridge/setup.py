@@ -18,7 +18,7 @@ setup(
     zip_safe=True,
     maintainer='G1 team',
     maintainer_email='robot@example.com',
-    description='G1 navigation data bridges; motion uses the official unitree_ros2 LocoClient.',
+    description='G1 navigation data bridges with a package-local Unitree API client.',
     license='Apache-2.0',
     entry_points={'console_scripts': [
         'sport_to_odom = g1_nav_bridge.sport_to_odom:main',

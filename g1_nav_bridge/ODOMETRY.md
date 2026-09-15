@@ -3,7 +3,7 @@
 `sport_to_odom` converts `/odommodestate` (`unitree_go/msg/SportModeState`)
 to `/odom` (`nav_msgs/msg/Odometry`). It does not broadcast TF or send
 motion commands. The existing nav_bridge launch starts it alongside the
-command bridge (whose enable-on-start setting remains false).
+command bridge.
 
 The output pose is boot-relative XY/yaw in `odom`, not Lightning `map`.
 Child frame is the existing ground-projected `base_link`. This is a planar

@@ -11,6 +11,7 @@
 #include "wrapper/ros_utils.h"
 
 #include <yaml-cpp/yaml.h>
+#include <cstdlib>
 #include <filesystem>
 #include <opencv2/opencv.hpp>
 
@@ -34,6 +35,15 @@ bool SlamSystem::Init(const std::string& yaml_path) {
     options_.with_2dvisualization_ = yaml["system"]["with_2dui"].as<bool>();
     options_.with_gridmap_ = yaml["system"]["with_g2p5"].as<bool>();
     options_.step_on_kf_ = yaml["system"]["step_on_kf"].as<bool>();
+    map_save_root_ = yaml["system"]["map_save_root"]
+                         ? yaml["system"]["map_save_root"].as<std::string>()
+                         : "./data";
+    if (map_save_root_ == "~" || map_save_root_.rfind("~/", 0) == 0) {
+        const char* home = std::getenv("HOME");
+        if (home != nullptr) {
+            map_save_root_ = std::string(home) + map_save_root_.substr(1);
+        }
+    }
 
     if (options_.with_loop_closing_) {
         LOG(INFO) << "slam with loop closing";
@@ -168,7 +178,15 @@ void SlamSystem::StartSLAM(std::string map_name) {
 void SlamSystem::SaveMap(const SaveMapService::Request::SharedPtr request,
                          SaveMapService::Response::SharedPtr response) {
     map_name_ = request->map_id;
-    std::string save_path = "./data/" + map_name_ + "/";
+    const std::filesystem::path map_id(map_name_);
+    if (map_name_.empty() || map_name_ == "." || map_name_ == ".." ||
+        map_id.filename() != map_id) {
+        LOG(ERROR) << "invalid map ID: " << map_name_;
+        response->response = 1;
+        return;
+    }
+    std::string save_path =
+        (std::filesystem::path(map_save_root_) / map_id).string();
 
     SaveMap(save_path);
     response->response = 0;
@@ -177,7 +195,7 @@ void SlamSystem::SaveMap(const SaveMapService::Request::SharedPtr request,
 void SlamSystem::SaveMap(const std::string& path) {
     std::string save_path = path;
     if (save_path.empty()) {
-        save_path = "./data/" + map_name_ + "/";
+        save_path = (std::filesystem::path(map_save_root_) / map_name_).string();
     }
 
     LOG(INFO) << "slam map saving to " << save_path;

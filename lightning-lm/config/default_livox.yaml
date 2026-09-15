@@ -69,7 +69,8 @@ system:
   evaluation: false
   lidar_loc_skip_num: 4
   lidar_odom_skip_num: 2
-  map_path: ./data/new_map/
+  map_path: ~/maps/new_map/
+  map_save_root: ~/maps
   pub_tf: true
 
 loop_closing:
@@ -133,7 +134,7 @@ pgo:
   smooth_factor: 0.01
 roi:
   height_max: 10.0
-  height_min: 0.5
+  height_min: 1.1 # 原始雷达点云 Z 下限，保留地面和低于雷达的点
   range_max: 70
   range_min: 3.0
 ui:

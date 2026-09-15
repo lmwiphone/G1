@@ -29,6 +29,7 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
     start_livox = LaunchConfiguration('start_livox')
     map_dir = LaunchConfiguration('map_dir')
+    map_save_root = LaunchConfiguration('map_save_root')
     with_ui = LaunchConfiguration('with_ui')
     with_2dui = LaunchConfiguration('with_2dui')
     start_rviz = LaunchConfiguration('start_rviz')
@@ -54,9 +55,13 @@ def generate_launch_description():
         condition=_is_mode('mapping'),
         launch_arguments={
             'map_dir': map_dir,
+            'map_save_root': map_save_root,
             'with_ui': with_ui,
             'with_2dui': with_2dui,
             'start_rviz': start_rviz,
+            'start_map_transform': PythonExpression([
+                "'false' if '", LaunchConfiguration('start_backend'), "' == 'true' else 'true'"
+            ]),
             'floor_height': LaunchConfiguration('floor_height'),
             'min_obstacle_height': LaunchConfiguration('min_obstacle_height'),
             'max_obstacle_height': LaunchConfiguration('max_obstacle_height'),
@@ -123,7 +128,7 @@ def generate_launch_description():
         ],
     )
 
-    default_map_dir = '/opt/G1/lighting_ws/data/new_map'
+    default_map_dir = os.path.expanduser('~/maps/new_map')
     return LaunchDescription([
         DeclareLaunchArgument(
             'mode', default_value='base',
@@ -137,6 +142,7 @@ def generate_launch_description():
         DeclareLaunchArgument('with_2dui', default_value='false'),
         DeclareLaunchArgument('start_rviz', default_value='false'),
         DeclareLaunchArgument('map_dir', default_value=default_map_dir),
+        DeclareLaunchArgument('map_save_root', default_value=os.path.expanduser('~/maps')),
         DeclareLaunchArgument('nav_map', default_value=default_map_dir + '/map.yaml'),
         DeclareLaunchArgument('floor_height', default_value=''),
         DeclareLaunchArgument('min_obstacle_height', default_value=''),

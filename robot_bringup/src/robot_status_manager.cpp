@@ -45,7 +45,6 @@
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include "std_msgs/msg/string.hpp"
 #include "std_srvs/srv/trigger.hpp"
-#include "std_srvs/srv/set_bool.hpp"
 #include "lightning/srv/save_map.hpp"
 #include <filesystem>
 
@@ -59,7 +58,7 @@ class StatusManagerNode : public rclcpp::Node {
   std::string localization_launch_file =
       "/robot_bringup/share/robot_bringup/launch/g1_localization.launch.py";
   std::string navigation_launch_file =
-      "/aid_navigation2/share/aid_navigation2/launch/navigation2.launch.py";
+      "/g1_nav_bridge/share/g1_nav_bridge/launch/g1_navigation.launch.py";
   std::string map_filepath_;
   std::shared_ptr<rclcpp::Node> nh_;
   std::shared_ptr<rclcpp::Node> node_;
@@ -98,7 +97,6 @@ class StatusManagerNode : public rclcpp::Node {
       lifecycle_manager_client_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr
       lifecycle_navigation_is_active_client_;
-  rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr motion_bridge_enable_client_;
   void GetIpHandleRequest(
       const std::shared_ptr<aid_robot_msgs::srv::GetString::Request> request,
       std::shared_ptr<aid_robot_msgs::srv::GetString::Response> response) {
@@ -197,7 +195,13 @@ class StatusManagerNode : public rclcpp::Node {
                    "map file name is empty");
         return false;
       }
-      filename = service_response->map_file;
+      filename = ResolveLightningMapDirectory(service_response->map_file);
+      if (filename.empty()) {
+        RCLCPP_ERROR(rclcpp::get_logger("get_current_map_client"),
+                     "selected map is incomplete: %s",
+                     service_response->map_file.c_str());
+        return false;
+      }
     } else {
       RCLCPP_ERROR(rclcpp::get_logger("get_current_map_client"),
                    "Failed to call service get_current_map_idp");
@@ -210,6 +214,20 @@ class StatusManagerNode : public rclcpp::Node {
     const std::filesystem::path path(directory);
     return std::filesystem::exists(path / "index.txt") &&
            std::filesystem::exists(path / "map.yaml");
+  }
+
+  std::string ResolveLightningMapDirectory(const std::string &directory) const {
+    if (IsLightningMapComplete(directory)) {
+      return directory;
+    }
+    const std::filesystem::path legacy_directory =
+        std::filesystem::path(directory) / "lightning";
+    if (IsLightningMapComplete(legacy_directory.string())) {
+      RCLCPP_WARN(get_logger(), "Using legacy Lightning map directory: %s",
+                  legacy_directory.c_str());
+      return legacy_directory.string();
+    }
+    return "";
   }
 
   bool LightningSaveMap(const std::string &requested_path) {
@@ -240,39 +258,19 @@ class StatusManagerNode : public rclcpp::Node {
       return false;
     }
 
+    const char *home = std::getenv("HOME");
+    if (home == nullptr || path.parent_path() != "/maps") {
+      RCLCPP_ERROR(get_logger(), "Map path must be /maps/<map_id>: %s",
+                   requested_path.c_str());
+      return false;
+    }
     const std::filesystem::path target =
-        std::filesystem::path("/opt/G1/maps") / map_id / "lightning";
-    if (!std::filesystem::exists(target / "index.txt") ||
-        !std::filesystem::exists(target / "map.yaml")) {
-      RCLCPP_ERROR(get_logger(), "Lightning returned success but map files are incomplete: %s",
+        std::filesystem::path(home) / "maps" / map_id;
+    if (!IsLightningMapComplete(target.string())) {
+      RCLCPP_ERROR(get_logger(), "Lightning map files are incomplete: %s",
                    target.c_str());
       return false;
     }
-
-    const char *home = std::getenv("HOME");
-    if (home == nullptr || requested_path.empty() || requested_path.front() != '/') {
-      RCLCPP_ERROR(get_logger(), "Legacy map path must start with '/': %s", requested_path.c_str());
-      return false;
-    }
-    const std::filesystem::path alias = std::string(home) + requested_path;
-    std::error_code ec;
-    std::filesystem::create_directories(alias.parent_path(), ec);
-    if (ec) {
-      RCLCPP_ERROR(get_logger(), "Cannot create map parent directory: %s", ec.message().c_str());
-      return false;
-    }
-    if (std::filesystem::is_symlink(alias, ec)) {
-      std::filesystem::remove(alias, ec);
-    } else if (std::filesystem::exists(alias, ec)) {
-      RCLCPP_ERROR(get_logger(), "Refusing to replace existing non-symlink path: %s", alias.c_str());
-      return false;
-    }
-    std::filesystem::create_directory_symlink(target, alias, ec);
-    if (ec) {
-      RCLCPP_ERROR(get_logger(), "Cannot create map compatibility link: %s", ec.message().c_str());
-      return false;
-    }
-    RCLCPP_INFO(get_logger(), "Map compatibility path: %s -> %s", alias.c_str(), target.c_str());
     return true;
   }
   // Legacy map loading helpers were removed. Lightning localization loads its
@@ -295,24 +293,7 @@ class StatusManagerNode : public rclcpp::Node {
     initial_pose_pub_->publish(initial_pose);
   }
 
-  bool EnableMotionBridge(bool enable) {
-    if (!motion_bridge_enable_client_->wait_for_service(std::chrono::seconds(2))) {
-      RCLCPP_ERROR(node_->get_logger(), "G1 motion bridge enable service is unavailable");
-      return false;
-    }
-    auto request = std::make_shared<std_srvs::srv::SetBool::Request>();
-    request->data = enable;
-    auto result = motion_bridge_enable_client_->async_send_request(request);
-    if (rclcpp::spin_until_future_complete(node_, result, std::chrono::seconds(3)) !=
-        rclcpp::FutureReturnCode::SUCCESS) {
-      RCLCPP_ERROR(node_->get_logger(), "G1 motion bridge enable request timed out");
-      return false;
-    }
-    return result.get()->success;
-  }
-
   bool ControlNavigation(uint8_t command) {
-
     auto request =
         std::make_shared<nav2_msgs::srv::ManageLifecycleNodes::Request>();
     request->command = command;
@@ -360,6 +341,45 @@ class StatusManagerNode : public rclcpp::Node {
     return result.get()->success;
   }
 
+  bool StartNavigation(const std::string& map_directory) {
+    const std::filesystem::path map_yaml =
+        std::filesystem::path(map_directory) / "map.yaml";
+    if (!std::filesystem::exists(map_yaml)) {
+      RCLCPP_ERROR(get_logger(), "Navigation map does not exist: %s",
+                   map_yaml.c_str());
+      return false;
+    }
+    if (navigation_started_) {
+      return true;
+    }
+    navigation_started_ = StartLaunch(
+        navigation_launch_file,
+        "map:=" + map_yaml.string() + " floor_z:=0.0 base_floor_z:=0.0");
+    return navigation_started_;
+  }
+
+  bool StopNavigation() {
+    if (!navigation_started_) {
+      return true;
+    }
+    if (!StopLaunch(navigation_launch_file)) {
+      return false;
+    }
+    navigation_started_ = false;
+    return true;
+  }
+
+  bool StartLocalizationAndNavigation(const std::string& map_directory) {
+    if (!StartLaunch(localization_launch_file, "map_dir:=" + map_directory)) {
+      return false;
+    }
+    if (StartNavigation(map_directory)) {
+      return true;
+    }
+    StopLaunch(localization_launch_file);
+    return false;
+  }
+
   void SaveMapCallback(
       const std::shared_ptr<aid_robot_msgs::srv::MapOperation::Request> request,
       std::shared_ptr<aid_robot_msgs::srv::MapOperation::Response> response) {
@@ -372,7 +392,12 @@ class StatusManagerNode : public rclcpp::Node {
         return;
       }
 
-      StopLaunch(maping_launch_file);
+      if (!StopLaunch(maping_launch_file)) {
+        response->message = "failed to stop mapping after saving";
+        response->success = false;
+        return;
+      }
+
       slam_status_ = "idle";
       response->success = true;
       return;
@@ -395,16 +420,16 @@ class StatusManagerNode : public rclcpp::Node {
     bool run_status = false;
     set_status_ = status;
     if (set_status_ == "mapping") {
-      EnableMotionBridge(false);
+      if (!StopNavigation()) {
+        return false;
+      }
       if (slam_status_ == "localization") {
-        StopLaunch(localization_launch_file);
-      } else {
-        StopLaunch(maping_launch_file);
+        if (!StopLaunch(localization_launch_file)) {
+          return false;
+        }
+      } else if (slam_status_ == "mapping" && !StopLaunch(maping_launch_file)) {
+        return false;
       }
-      if (navigation_started_ && IsNavigationActive()) {
-        PauseNavigation();
-      }
-      
 
       run_status = StartLaunch(maping_launch_file);
       if (run_status == true) {
@@ -412,14 +437,16 @@ class StatusManagerNode : public rclcpp::Node {
       }
 
     } else if (set_status_ == "localization") {
-      EnableMotionBridge(false);
-      if (navigation_started_ && IsNavigationActive()) {
-        PauseNavigation();
-      }
       if (slam_status_ == "mapping") {
-        StopLaunch(maping_launch_file);
-      } else {
-        StopLaunch(localization_launch_file);
+        if (!StopLaunch(maping_launch_file)) {
+          return false;
+        }
+      } else if (slam_status_ == "localization" &&
+                 !StopLaunch(localization_launch_file)) {
+        return false;
+      }
+      if (!StopNavigation()) {
+        return false;
       }
 
       if (!GetCurrentMap(map_filename_) || !IsLightningMapComplete(map_filename_)) {
@@ -427,49 +454,39 @@ class StatusManagerNode : public rclcpp::Node {
                      "No complete Lightning map is selected; mapping must be saved first");
         return false;
       }
-      run_status = StartLaunch(localization_launch_file,
-                                "map_dir:=" + map_filename_);
+      run_status = StartLocalizationAndNavigation(map_filename_);
       if (run_status == true) {
         slam_status_ = set_status_;
-        if (!navigation_started_) {
-          navigation_started_ = StartLaunch(
-              navigation_launch_file, "map:=" + map_filename_ + "/map.yaml");
-          if (!navigation_started_) {
-            RCLCPP_ERROR(get_logger(), "Failed to start Nav2 for selected map");
-            return false;
-          }
-        }
       }
       
     } else if (set_status_ == "patrol") {
       
       if (slam_status_ == "localization") {
+        if (!navigation_started_ && !StartNavigation(map_filename_)) {
+          return false;
+        }
+        if (!IsNavigationActive() && !ResumeNavigation()) {
+          RCLCPP_ERROR(get_logger(), "Failed to resume Nav2");
+          return false;
+        }
         run_status = ChangeMap(map_filename_+"/map.yaml");
         if (run_status == true) {
-          if (!IsNavigationActive() && !ResumeNavigation()) {
-            RCLCPP_ERROR(get_logger(), "Failed to resume Nav2");
-            return false;
-          }
-          run_status = EnableMotionBridge(true);
-          if (run_status) {
-            control_model_ = set_status_;
-          }
+          control_model_ = set_status_;
         }
       } else {
         RCLCPP_INFO_STREAM(rclcpp::get_logger("robot_status_manager"),
                            "can not set to patrol model");
       }
     } else if (set_status_ == "remote_control") {
-      run_status = EnableMotionBridge(true);
-      if (run_status) {
-        control_model_ = set_status_;
-      }
+      control_model_ = set_status_;
+      run_status = true;
     } else if (set_status_ == "idle") {
-      EnableMotionBridge(false);
-      if (navigation_started_ && IsNavigationActive()) {
-        PauseNavigation();
+      if (!StopNavigation()) {
+        return false;
       }
-      StopLaunch(maping_launch_file);
+      if (slam_status_ == "mapping" && !StopLaunch(maping_launch_file)) {
+        return false;
+      }
       control_model_ = set_status_;
       run_status = true;
     }
@@ -516,12 +533,14 @@ class StatusManagerNode : public rclcpp::Node {
     nh_ = std::shared_ptr<::rclcpp::Node>(this, [](::rclcpp::Node *) {});
     const std::string bringup_share =
         ament_index_cpp::get_package_share_directory("robot_bringup");
-    map_filepath_ = bringup_share + "/maps";
+    const char *home = std::getenv("HOME");
+    map_filepath_ = home != nullptr ? std::string(home) + "/maps"
+                    : bringup_share + "/maps";
     maping_launch_file = bringup_share + "/launch/g1_mapping.launch.py";
     localization_launch_file = bringup_share + "/launch/g1_localization.launch.py";
     navigation_launch_file =
-        ament_index_cpp::get_package_share_directory("aid_navigation2") +
-        "/launch/navigation2.launch.py";
+      ament_index_cpp::get_package_share_directory("g1_nav_bridge") +
+      "/launch/g1_navigation.launch.py";
     status_change_server_ =
         nh_->create_service<aid_robot_msgs::srv::StatusChange>(
             "mode_set",
@@ -552,9 +571,6 @@ class StatusManagerNode : public rclcpp::Node {
     lifecycle_navigation_is_active_client_ = 
       node_->create_client<std_srvs::srv::Trigger>(
           "/lifecycle_manager_navigation/is_active");
-    motion_bridge_enable_client_ =
-      node_->create_client<std_srvs::srv::SetBool>(
-          "/g1_cmdvel_to_sport/enable");
     start_launch_client_ = node_->create_client<aid_robot_msgs::srv::ControlLaunch>(
       "start_launch",
       rmw_qos_profile_services_default, 
@@ -575,12 +591,11 @@ class StatusManagerNode : public rclcpp::Node {
     const bool have_lightning_map =
         GetCurrentMap(map_filename_) && IsLightningMapComplete(map_filename_);
     if (have_lightning_map) {
-      const bool run_status = StartLaunch(localization_launch_file,
-                                          "map_dir:=" + map_filename_);
+      const bool run_status = StartLocalizationAndNavigation(map_filename_);
       if (run_status) {
         slam_status_ = "localization";
       } else {
-        RCLCPP_ERROR(get_logger(), "Failed to start Lightning localization: %s",
+        RCLCPP_ERROR(get_logger(), "Failed to start Lightning localization and navigation: %s",
                      map_filename_.c_str());
       }
     } else {
@@ -589,20 +604,6 @@ class StatusManagerNode : public rclcpp::Node {
       map_filename_ = map_filepath_ + "/default";
     }
 
-    if (have_lightning_map) {
-      navigation_started_ = StartLaunch(
-          navigation_launch_file, "map:=" + map_filename_ + "/map.yaml");
-      if (!navigation_started_) {
-        RCLCPP_ERROR(get_logger(), "Navigation launch failed");
-      }
-    }
-    // Physical G1 must not accept velocity commands merely because bringup
-    // completed. The frontend explicitly selects patrol or remote_control to
-    // enable the Unitree motion bridge.
-    EnableMotionBridge(false);
-    if (navigation_started_ && IsNavigationActive()) {
-      PauseNavigation();
-    }
     RCLCPP_INFO(this->get_logger(), "robot_status init success");
 
   }

@@ -4,7 +4,7 @@ import json
 import math
 import numpy as np
 import os
-from pathlib import Path
+from pathlib import Path as FilesystemPath
 import rclpy
 import shutil
 import time
@@ -83,9 +83,9 @@ class MapManagerNode(Node):
 
     def _remove_map_files(self, file_path: str):
         """Remove one registered map without invoking a shell or following arbitrary paths."""
-        alias = Path(file_path).expanduser()
-        legacy_root = Path.home() / "maps"
-        lightning_root = Path("/opt/G1/maps")
+        alias = FilesystemPath(file_path).expanduser()
+        legacy_root = FilesystemPath.home() / "maps"
+        lightning_root = FilesystemPath("/opt/G1/maps")
 
         if not alias.is_absolute() or not alias.is_relative_to(legacy_root):
             raise ValueError(f"refusing to delete map path outside {legacy_root}: {alias}")
@@ -104,6 +104,14 @@ class MapManagerNode(Node):
                 map_root = lightning_root / relative.parts[0]
                 if map_root.exists():
                     shutil.rmtree(map_root)
+
+    @staticmethod
+    def _map_yaml_path(file_path: str) -> FilesystemPath:
+        map_directory = FilesystemPath(file_path).expanduser()
+        root_yaml = map_directory / "map.yaml"
+        if root_yaml.is_file():
+            return root_yaml
+        return map_directory / "lightning" / "map.yaml"
 
     def is_map_id_exist(self, map_id: int) -> bool:
         """
@@ -264,7 +272,7 @@ class MapManagerNode(Node):
         print("add_map in") # debug print
         try:
             map_name = request.map_name.strip()
-            file_path = home_dir = os.path.expanduser("~") + request.map_file.strip()
+            file_path = os.path.expanduser("~") + request.map_file.strip()
             creator_id = 0
             sql_check_map_name = "select 1 from map where name=? and creator_id=?"
             result = self.conn.execSQL(sql_check_map_name, (map_name, creator_id))
@@ -274,7 +282,8 @@ class MapManagerNode(Node):
                 response.message = "map name duplicated"
             else:
                 # 判断新增的地图文件是否存在
-                if os.path.exists(f"{file_path}/map.yaml"):
+                map_yaml_file = self._map_yaml_path(file_path)
+                if map_yaml_file.is_file():
                     sql_add_map = "insert into map(name, file_path, create_timestamp, edit_timestamp, creator_id) values(?, ?, ?, ?, ?)"
                     now = int(time.time())
                     self.conn.execSQL(sql_add_map, (map_name, file_path, now, now, creator_id))
@@ -282,9 +291,9 @@ class MapManagerNode(Node):
                     response.message = "ok"
                     print("add_map ok") # debug print
                 else:
-                    print("add_map not exists file" + f"{file_path}.yaml") # debug print
+                    print("add_map not exists file " + str(map_yaml_file)) # debug print
                     response.success = False
-                    response.message = "map file not exists" + f"{file_path}.yaml"
+                    response.message = "map file not exists " + str(map_yaml_file)
         except Exception as e:
             # todo: 记录详细错误信息到日志
             print(e)
@@ -298,7 +307,6 @@ class MapManagerNode(Node):
         #print("get_map_image in") # debug print
         # 默认状态 / 没找到地图记录 / 查询出现问题，都是以下值作为返回值
         response.success = False
-        response.map = OccupancyGrid()
         response.map_file = ""
         # 通过地图id，查找地图文件路径
         map_id = (request.id,)
@@ -314,12 +322,12 @@ class MapManagerNode(Node):
             if len(result) > 0:
                 print("get_map_image in2") # debug print
                 _ = result[0]
-                map_yaml_file = _["file_path"]+"/map.yaml"
-                response.success = os.path.exists(map_yaml_file)
-                response.map_file = map_yaml_file
+                map_yaml_file = self._map_yaml_path(_["file_path"])
+                response.success = map_yaml_file.is_file()
+                response.map_file = str(map_yaml_file)
                 if response.success:
                     # 打开 filepath，并转成 nav_msgs/OccupancyGrid 类型
-                    self.__map_pgm_to_grid(map_yaml_file, response.map)
+                    self.__map_pgm_to_grid(str(map_yaml_file), response.map)
                     #print("get_map_image ok") # debug print
             print("get_map_image out") # debug print
         return response
@@ -676,8 +684,10 @@ class MapManagerNode(Node):
         img[np.where((img == [205, 205, 205]).all(axis=2))] = [170, 108, 82]
         img[np.where((img == [254, 254, 254]).all(axis=2))] = [200, 145, 127]
 
-        # Convert image to JPEG format
-        retval, buffer = cv2.imencode(".webp", img)
+        # Convert image to the JPEG format declared by the web client.
+        retval, buffer = cv2.imencode(".jpg", img)
+        if not retval:
+            raise RuntimeError("JPEG encoding failed")
         jpeg_data = buffer.tobytes()
 
         # Convert JPEG data to base64 format
