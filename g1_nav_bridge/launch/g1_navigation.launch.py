@@ -11,7 +11,8 @@ from pathlib import Path
 def generate_launch_description():
     bridge = Path(get_package_share_directory('g1_nav_bridge'))
     nav = Path(get_package_share_directory('aid_navigation2'))
-    args = ['map', 'floor_z', 'base_floor_z', 'cloud_topic', 'sensor_frame', 'robot_radius',
+    args = ['map', 'floor_z', 'base_floor_z', 'cloud_topic', 'sensor_frame',
+            'use_realsense_obstacles', 'realsense_topic', 'robot_radius',
             'use_collision_monitor', 'use_keepout']
     return LaunchDescription([
         DeclareLaunchArgument('map', default_value='/opt/G1/lighting_ws/data/new_map/map.yaml',
@@ -21,6 +22,8 @@ def generate_launch_description():
                              description='当前 URDF 的 base_link 为地面投影，地面 Z=0'),
         DeclareLaunchArgument('cloud_topic', default_value='/livox/points'),
         DeclareLaunchArgument('sensor_frame', default_value='mid360_link'),
+        DeclareLaunchArgument('use_realsense_obstacles', default_value='false', choices=['true', 'false']),
+        DeclareLaunchArgument('realsense_topic', default_value='/camera/camera/depth/color/points'),
         DeclareLaunchArgument('robot_radius', default_value='0.40'),
         DeclareLaunchArgument('use_collision_monitor', default_value='true',
                              choices=['true', 'false'], description='false：跳过额外碰撞停车，桥接直接订阅 /cmd_vel'),

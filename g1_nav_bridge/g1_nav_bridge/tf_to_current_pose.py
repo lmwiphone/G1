@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """只读 map → base_link，发布定位 PoseStamped；不生成或修改 TF。"""
 import math
 

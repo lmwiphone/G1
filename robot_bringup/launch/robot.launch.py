@@ -9,7 +9,12 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    GroupAction,
+    IncludeLaunchDescription,
+    SetLaunchConfiguration,
+)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
@@ -18,7 +23,7 @@ from launch_ros.actions import Node
 
 def _is_mode(*modes):
     return IfCondition(PythonExpression([
-        "'", LaunchConfiguration('mode'), "' in ", repr(tuple(modes))
+        "'", LaunchConfiguration('requested_mode'), "' in ", repr(tuple(modes))
     ]))
 
 
@@ -28,6 +33,7 @@ def generate_launch_description():
 
     use_sim_time = LaunchConfiguration('use_sim_time')
     start_livox = LaunchConfiguration('start_livox')
+    start_realsense = LaunchConfiguration('start_realsense')
     map_dir = LaunchConfiguration('map_dir')
     map_save_root = LaunchConfiguration('map_save_root')
     with_ui = LaunchConfiguration('with_ui')
@@ -40,7 +46,17 @@ def generate_launch_description():
         launch_arguments={
             'start_livox': start_livox,
             'livox_config': LaunchConfiguration('livox_config'),
+            'start_realsense': start_realsense,
+            'realsense_serial_no': LaunchConfiguration('realsense_serial_no'),
+            'realsense_initial_reset': LaunchConfiguration('realsense_initial_reset'),
         }.items(),
+    )
+
+    battery_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(bridge_share, 'launch', 'battery_bridge.launch.py')),
+        condition=IfCondition(LaunchConfiguration('start_battery_bridge')),
+        launch_arguments={'use_sim_time': use_sim_time}.items(),
     )
 
     rosbridge_launch = IncludeLaunchDescription(
@@ -90,6 +106,8 @@ def generate_launch_description():
             'base_floor_z': LaunchConfiguration('base_floor_z'),
             'cloud_topic': LaunchConfiguration('cloud_topic'),
             'sensor_frame': LaunchConfiguration('sensor_frame'),
+            'use_realsense_obstacles': LaunchConfiguration('use_realsense_obstacles'),
+            'realsense_topic': LaunchConfiguration('realsense_topic'),
             'robot_radius': LaunchConfiguration('robot_radius'),
             'use_collision_monitor': LaunchConfiguration('use_collision_monitor'),
             'use_keepout': LaunchConfiguration('use_keepout'),
@@ -112,7 +130,13 @@ def generate_launch_description():
                  parameters=[{'use_sim_time': use_sim_time}]),
             Node(package='robot_bringup', executable='robot_status_manager_node',
                  name='robot_status_manager_node', prefix=['taskset -c 3-7'], output='screen',
-                 parameters=[{'use_sim_time': use_sim_time}]),
+                 # 定位/Nav2 已由本顶层 launch 创建。禁止状态管理节点再经由
+                 # launch_manager 启动第二套相同进程。
+                 parameters=[{
+                     'use_sim_time': use_sim_time,
+                     'manage_stack': False,
+                     'startup_mode': LaunchConfiguration('requested_mode'),
+                 }]),
             Node(package='aid_robot_py', executable='map_transform_node',
                  name='map_transform_node', prefix=['taskset -c 3-7'], output='screen',
                  parameters=[{'use_sim_time': use_sim_time}]),
@@ -128,14 +152,21 @@ def generate_launch_description():
         ],
     )
 
-    default_map_dir = os.path.expanduser('~/maps/new_map')
+    # Thor 当前经过验证并实际使用的 Lightning/2D 地图目录。
+    default_map_dir = '/opt/G1/lighting_ws/data/new_map'
     return LaunchDescription([
         DeclareLaunchArgument(
-            'mode', default_value='base',
+            'mode', default_value='navigation',
             choices=['base', 'mapping', 'localization', 'navigation'],
-            description='互斥运行模式；navigation 会组合定位与 Nav2'),
+            description='互斥运行模式；默认启动定位、Nav2 与运动桥'),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument('start_livox', default_value='true'),
+        DeclareLaunchArgument('start_realsense', default_value='true'),
+        DeclareLaunchArgument('start_battery_bridge', default_value='true'),
+        # 使用序列号绑定相机，与USB端口和/dev/video*编号无关。
+        DeclareLaunchArgument(
+            'realsense_serial_no', default_value="'347622073141'"),
+        DeclareLaunchArgument('realsense_initial_reset', default_value='false'),
         DeclareLaunchArgument('start_rosbridge', default_value='true'),
         DeclareLaunchArgument('start_backend', default_value='true'),
         DeclareLaunchArgument('with_ui', default_value='false'),
@@ -151,6 +182,13 @@ def generate_launch_description():
         DeclareLaunchArgument('base_floor_z', default_value='0.0'),
         DeclareLaunchArgument('cloud_topic', default_value='/livox/points'),
         DeclareLaunchArgument('sensor_frame', default_value='mid360_link'),
+        DeclareLaunchArgument(
+            'realsense_topic',
+            default_value='/camera/camera/depth/color/points'),
+        DeclareLaunchArgument(
+            'use_realsense_obstacles', default_value='true',
+            choices=['true', 'false'],
+            description='将D435点云经STVL加入Nav2局部障碍层'),
         DeclareLaunchArgument('robot_radius', default_value='0.40'),
         DeclareLaunchArgument(
             'use_collision_monitor', default_value='false', choices=['true', 'false'],
@@ -161,8 +199,13 @@ def generate_launch_description():
             default_value=os.path.join(
                 get_package_share_directory('livox_ros_driver2'), 'config',
                 'G1_MID360s_config.json')),
+        # 子 launch（Lightning）内部也使用名为 mode 的参数，并会把它改成
+        # localization/mapping。先保存用户请求的顶层模式，避免后续 Nav2
+        # 条件和后台节点被子 launch 的同名参数污染。
+        SetLaunchConfiguration('requested_mode', LaunchConfiguration('mode')),
         rosbridge_launch,
         sensor_launch,
+        battery_launch,
         mapping_launch,
         localization_launch,
         navigation_launch,

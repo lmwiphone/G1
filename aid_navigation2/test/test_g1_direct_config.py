@@ -31,7 +31,9 @@ class G1ProfileTests(unittest.TestCase):
         self.assertNotIn('amcl', self.nav)
 
     def test_negative_z_obstacles_and_distinct_height_frames(self):
-        p = self.nav['local_costmap']['local_costmap']['ros__parameters']['obstacle_layer']['livox']
+        local = self.nav['local_costmap']['local_costmap']['ros__parameters']
+        self.assertTrue(local['obstacle_layer']['footprint_clearing_enabled'])
+        p = local['obstacle_layer']['livox']
         self.assertAlmostEqual(p['min_obstacle_height'], -1.1)
         self.assertLess(p['min_obstacle_height'], -0.9)  # 30 cm box above test floor
         self.assertGreater(p['min_obstacle_height'], -1.2)  # floor rejected
@@ -40,6 +42,49 @@ class G1ProfileTests(unittest.TestCase):
         self.assertTrue(p['marking'] and p['clearing'])
         c = self.safe['collision_monitor']['ros__parameters']['pointcloud1']
         self.assertAlmostEqual(c['min_height'], -0.6)
+
+    def test_realsense_is_opt_in_and_uses_message_frame(self):
+        for name in ('local_costmap', 'global_costmap'):
+            params = self.nav[name][name]['ros__parameters']
+            layer = params['obstacle_layer']
+            self.assertEqual(layer['observation_sources'], 'livox')
+            self.assertNotIn('realsense', layer)
+            self.assertNotIn('stvl_voxel_layer', params)
+        nav, _ = config.make_configs(
+            self.stock, self.collision, floor_z=-1.2, base_floor_z=0,
+            cloud_topic='/livox/points', sensor_frame='mid360_link',
+            realsense_topic='/camera/camera/depth/color/points',
+            ros_distro='jazzy')
+        local = nav['local_costmap']['local_costmap']['ros__parameters']
+        self.assertEqual(local['obstacle_layer']['observation_sources'], 'livox')
+        self.assertIn('stvl_voxel_layer', local['plugins'])
+        stvl = local['stvl_voxel_layer']
+        self.assertEqual(stvl['plugin'],
+                         'spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer')
+        self.assertEqual(stvl['observation_sources'],
+                         'realsense_mark realsense_clear')
+        self.assertEqual(stvl['realsense_mark']['topic'],
+                         '/camera/camera/depth/color/points')
+        self.assertEqual(stvl['realsense_mark']['filter'], 'voxel')
+        self.assertEqual(stvl['realsense_mark']['voxel_min_points'], 2)
+        self.assertNotIn('sensor_frame', stvl['realsense_mark'])
+        self.assertAlmostEqual(stvl['realsense_clear']['min_obstacle_height'], -1.15)
+        self.assertAlmostEqual(stvl['realsense_clear']['max_obstacle_height'], 0.6)
+
+        global_params = nav['global_costmap']['global_costmap']['ros__parameters']
+        self.assertEqual(global_params['obstacle_layer']['observation_sources'], 'livox')
+        self.assertNotIn('stvl_voxel_layer', global_params['plugins'])
+        self.assertNotIn('stvl_voxel_layer', global_params)
+
+    def test_costmap_rates_match_local_control_without_duplicate_rgbd(self):
+        local = self.nav['local_costmap']['local_costmap']['ros__parameters']
+        global_params = self.nav['global_costmap']['global_costmap']['ros__parameters']
+        self.assertEqual(local['update_frequency'], 10.0)
+        self.assertEqual(local['publish_frequency'], 5.0)
+        self.assertEqual(global_params['update_frequency'], 1.0)
+        self.assertEqual(global_params['publish_frequency'], 1.0)
+        self.assertEqual(local['obstacle_layer']['observation_sources'], 'livox')
+        self.assertEqual(global_params['obstacle_layer']['observation_sources'], 'livox')
 
     def test_frontend_keepout_preserved_and_no_source_mutation(self):
         for name in ('local_costmap', 'global_costmap'):
@@ -63,7 +108,9 @@ class G1ProfileTests(unittest.TestCase):
                       for p in configs if 'g1_cmdvel_to_sport' in yaml.safe_load(p.read_text()))
         self.assertEqual(bridge['cmd_vel_topic'], '/cmd_vel_safe')
         self.assertGreater(bridge['duration'], 0.0)
-        self.assertEqual(s['max_velocity'], [0.15, 0.0, 0.25])
+        self.assertEqual(s['max_velocity'], [0.5, 0.0, 0.9])
+        self.assertEqual(s['min_velocity'], [0.0, 0.0, -0.9])
+        self.assertEqual(s['deadband_velocity'], [0.3, 0.0, 0.8])
 
     def test_reject_missing_or_invalid_geometry(self):
         with self.assertRaises(ValueError):
@@ -83,8 +130,12 @@ class G1ProfileTests(unittest.TestCase):
         p = self.nav['controller_server']['ros__parameters']
         self.assertEqual(p['progress_checker_plugin'], 'progress_checker')
         self.assertAlmostEqual(p['FollowPath']['model_dt'], 1. / p['controller_frequency'])
-        self.assertEqual(p['FollowPath']['vx_max'], 0.15)
-        self.assertEqual(p['FollowPath']['wz_max'], 0.25)
+        self.assertEqual(p['FollowPath']['vx_min'], 0.0)
+        self.assertEqual(p['FollowPath']['vx_max'], 0.5)
+        self.assertEqual(p['FollowPath']['wz_max'], 0.9)
+        behavior = self.nav['behavior_server']['ros__parameters']
+        self.assertEqual(behavior['max_rotational_vel'], 0.9)
+        self.assertEqual(behavior['min_rotational_vel'], 0.8)
 
     def test_launch_syntax_and_required_heights(self):
         for p in (ROOT/'launch').glob('*.py'):

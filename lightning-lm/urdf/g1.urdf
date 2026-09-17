@@ -32,6 +32,27 @@
       rpy="0 0.04014257279586953 0"/>
   </joint>
 
+  <!-- d435 -->
+  <link name="d435_link"/>
+
+  <joint name="base_to_d435_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="d435_link"/>
+    <origin xyz="0.0576235 0.01753 1.24987" rpy="0 0.8307767239493009 0"/>
+  </joint>
+
+  <!--
+    realsense2_camera with camera_name:=camera publishes its internal TF tree
+    below camera_link.  d435_link is the calibrated mounting frame and is
+    intentionally coincident with the driver's camera_link.
+  -->
+  <link name="camera_link"/>
+
+  <joint name="d435_to_camera_link_joint" type="fixed">
+    <parent link="d435_link"/>
+    <child link="camera_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
 
   <!-- MID360 internal IMU -->
   <link name="mid360_imu"/>

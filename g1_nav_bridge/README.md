@@ -12,6 +12,7 @@ Nav2 参数仍由 `aid_navigation2` 管理，前端由原 `robot_bringup` 等包
 | `sport_to_odom` 平面里程计转换 | `/odommodestate`，`unitree_go/msg/SportModeState` | `/odom`，`nav_msgs/msg/Odometry`，无 TF |
 | `tf_to_current_pose` 定位话题转换 | TF `map → base_link` | `/current_pose`，`geometry_msgs/msg/PoseStamped`，无 TF |
 | `cmdvel_to_sport` ROS 速度桥 | `/cmd_vel_safe`，`geometry_msgs/msg/Twist` | 调用包内 `SetVelocity(vx, vy, omega, duration)` |
+| `battery_state_bridge` 电池转换 | `/lf/bmsstate`，`unitree_hg/msg/BmsState` | `/battery_state`，`sensor_msgs/msg/BatteryState` |
 | `g1_navigation.launch.py` | 地图 YAML、实测地面高度 | 启动现有 Nav2、碰撞监测及可选 bridge |
 
 命令链：`Nav2 → /cmd_vel_nav → velocity_smoother → /cmd_vel → collision_monitor
@@ -142,6 +143,7 @@ ros2 launch robot_bringup robot.launch.py mode:=navigation \
 
 整机运行统一从 `robot_bringup/robot.launch.py` 进入。顶层会启动 Lightning 定位，
 并只包含一次本包的导航 launch；运动桥和可选 collision monitor 不会被重复创建。
+顶层默认还会启动一次电池转换节点；如需诊断可传 `start_battery_bridge:=false`。
 本包的 `g1_navigation.launch.py` 保留为内部原子 launch 和独立诊断入口，不再与
 `robot.launch.py` 并列作为日常启动方式。
 不要再并行启动旧 `navigation2.launch.py` 或本包内部 launch。前端当前没有速度遥控话题。
@@ -154,6 +156,21 @@ ros2 launch g1_nav_bridge nav_bridge.launch.py
 
 只读取里程计：`ros2 run g1_nav_bridge sport_to_odom`。
 同一种节点只启动一份。
+
+## /battery_state 标准电量输出
+
+`robot.launch.py` 默认启动电量转换，也可以单独运行：
+
+```bash
+ros2 launch g1_nav_bridge battery_bridge.launch.py
+ros2 topic echo /battery_state --once
+```
+
+换算规则为：BMS 总电压和单体电压从 mV 转为 V，电流从 mA 转为 A，SOC 从
+`0~100` 转为 `0.0~1.0`。无容量数据的字段按 `BatteryState` 规范填写 NaN；SOH 百分比
+不冒充故障枚举。ROS 话题 `/lf/bmsstate` 在底层 DDS 中显示为 `rt/lf/bmsstate`，二者
+是同一数据通道。`unitree_hg/msg/BmsState` 的官方字段定义已作为独立接口包放在当前
+工作空间 `src/unitree_hg`，部署时不依赖外部 `unitree_ros2`。
 
 ## /current_pose 定位输出
 

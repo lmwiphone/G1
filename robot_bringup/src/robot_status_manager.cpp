@@ -67,6 +67,9 @@ class StatusManagerNode : public rclcpp::Node {
   std::string control_model_;
   std::string slam_status_;
   std::string map_filename_;
+  // true: 本节点通过 launch_manager 启停 SLAM/Nav2；
+  // false: 顶层 robot.launch.py 已经拥有这些进程，本节点只上报状态。
+  bool manage_stack_ = true;
   bool navigation_started_ = false;
 
   rclcpp::executors::SingleThreadedExecutor::SharedPtr callback_group_executor_;
@@ -419,6 +422,34 @@ class StatusManagerNode : public rclcpp::Node {
   bool ModeSet(std::string status) {
     bool run_status = false;
     set_status_ = status;
+
+    // 由顶层 launch 持有进程时，不能再通过 launch_manager 启停第二套
+    // Lightning/Nav2。遥控/巡航只改变控制状态，不改变进程所有权。
+    if (!manage_stack_) {
+      if (set_status_ == "remote_control") {
+        control_model_ = set_status_;
+        return true;
+      }
+      if (set_status_ == "patrol" && slam_status_ == "localization") {
+        if (!IsNavigationActive()) {
+          RCLCPP_ERROR(get_logger(),
+                       "Cannot enter patrol: the parent-owned Nav2 stack is not active");
+          return false;
+        }
+        control_model_ = set_status_;
+        return true;
+      }
+      if (set_status_ == slam_status_) {
+        return true;
+      }
+      RCLCPP_ERROR(
+          get_logger(),
+          "Cannot switch process mode to '%s': SLAM/Nav2 are owned by robot.launch.py; "
+          "restart the top-level launch with the requested mode",
+          set_status_.c_str());
+      return false;
+    }
+
     if (set_status_ == "mapping") {
       if (!StopNavigation()) {
         return false;
@@ -518,6 +549,9 @@ class StatusManagerNode : public rclcpp::Node {
  public:
   StatusManagerNode() : Node("robot_status_manager_node") {
     control_model_ = "idle";
+    manage_stack_ = declare_parameter<bool>("manage_stack", true);
+    const std::string startup_mode =
+        declare_parameter<std::string>("startup_mode", "base");
     // launch_ros 通过全局 __node 重映射主节点名称。若辅助节点也读取全局
     // 参数，它会被重映射成与主节点相同的名称，并触发重复 rosout publisher。
     // 辅助节点只用于同步 service client，必须保留独立且稳定的节点名。
@@ -586,22 +620,38 @@ class StatusManagerNode : public rclcpp::Node {
     change_map_client_ =
         node_->create_client<nav2_msgs::srv::LoadMap>("/map_server/load_map");
     slam_status_ = "idle";
-    
 
-    const bool have_lightning_map =
-        GetCurrentMap(map_filename_) && IsLightningMapComplete(map_filename_);
-    if (have_lightning_map) {
-      const bool run_status = StartLocalizationAndNavigation(map_filename_);
-      if (run_status) {
+    if (!manage_stack_) {
+      if (startup_mode == "mapping") {
+        slam_status_ = "mapping";
+      } else if (startup_mode == "localization" ||
+                 startup_mode == "navigation") {
         slam_status_ = "localization";
-      } else {
-        RCLCPP_ERROR(get_logger(), "Failed to start Lightning localization and navigation: %s",
-                     map_filename_.c_str());
       }
+      RCLCPP_INFO(
+          get_logger(),
+          "SLAM/Nav2 process ownership belongs to robot.launch.py; "
+          "automatic nested launch is disabled (startup_mode=%s)",
+          startup_mode.c_str());
     } else {
-      RCLCPP_WARN(get_logger(),
-                  "No complete Lightning map is selected; starting idle for first mapping");
-      map_filename_ = map_filepath_ + "/default";
+      const bool have_lightning_map =
+          GetCurrentMap(map_filename_) && IsLightningMapComplete(map_filename_);
+      if (have_lightning_map) {
+        const bool run_status = StartLocalizationAndNavigation(map_filename_);
+        if (run_status) {
+          slam_status_ = "localization";
+        } else {
+          RCLCPP_ERROR(
+              get_logger(),
+              "Failed to start Lightning localization and navigation: %s",
+              map_filename_.c_str());
+        }
+      } else {
+        RCLCPP_WARN(
+            get_logger(),
+            "No complete Lightning map is selected; starting idle for first mapping");
+        map_filename_ = map_filepath_ + "/default";
+      }
     }
 
     RCLCPP_INFO(this->get_logger(), "robot_status init success");

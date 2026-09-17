@@ -106,10 +106,11 @@ controller_server:
       max_robot_pose_search_dist: 2.5
       enforce_path_inversion: true
 
-      vx_max: 0.15
+      # G1 不后退；低于 0.3 m/s 的无效前进命令由 velocity_smoother 死区置零。
+      vx_max: 0.5
       vx_min: 0.0
       vy_max: 0.0
-      wz_max: 0.25
+      wz_max: 0.9
       vx_std: 0.3
       vy_std: 0.0
       wz_std: 0.3
@@ -270,8 +271,8 @@ behavior_server:
     transform_tolerance: 0.1
     use_sim_time: false
     simulate_ahead_time: 2.0
-    max_rotational_vel: 0.25
-    min_rotational_vel: 0.10
+    max_rotational_vel: 0.9
+    min_rotational_vel: 0.8
     rotational_acc_lim: 0.60
 
 velocity_smoother:
@@ -280,12 +281,14 @@ velocity_smoother:
     smoothing_frequency: 10.0
     scale_velocities: false
     feedback: "OPEN_LOOP"
-    max_velocity: [0.15, 0.0, 0.25]
-    min_velocity: [-0.15, 0.0, -0.25]
+    # X 下限为 0，硬性禁止后退；角速度保留正负方向。
+    max_velocity: [0.5, 0.0, 0.9]
+    min_velocity: [0.0, 0.0, -0.9]
     max_accel: [0.35, 0.35, 0.60]
     max_decel: [-0.35, -0.35, -0.60]
     enable_stamped_cmd_vel: false
-    deadband_velocity: [0.0, 0.0, 0.0]
+    # 本体无法执行的非零低速区间直接置零。
+    deadband_velocity: [0.3, 0.0, 0.8]
     velocity_timeout: 0.20
 
 local_costmap:
@@ -294,8 +297,9 @@ local_costmap:
       use_sim_time: false
       global_frame: map
       robot_base_frame: base_link
-      update_frequency: 5.0
-      publish_frequency: 2.0
+      # 与 10 Hz 控制循环同步更新；5 Hz 发布已足够 RViz/前端显示。
+      update_frequency: 10.0
+      publish_frequency: 5.0
       transform_tolerance: 0.20
       resolution: 0.05
       robot_radius: 0.20  # 初始测试包络，实机姿态/手臂不得超出；上线前实测
@@ -303,10 +307,11 @@ local_costmap:
       rolling_window: true
       width: 6
       height: 6
-      plugins: ["obstacle_layer", "keepout_layer", "inflation_layer"]
+      plugins: ["obstacle_layer", "stvl_voxel_layer", "keepout_layer", "inflation_layer"]
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: true
+        footprint_clearing_enabled: true
         combination_method: 1
         max_obstacle_height: 1.8
         observation_sources: livox
@@ -323,6 +328,56 @@ local_costmap:
           obstacle_max_range: 4.0
           raytrace_min_range: 0.25
           raytrace_max_range: 5.0
+      # D435 只加入局部代价地图。STVL 先按 5 cm 体素过滤点云，再完成三维标记与视锥清除。
+      # g1_navigation_direct.launch.py 会根据 use_realsense_obstacles 决定是否启用本层。
+      stvl_voxel_layer:
+        plugin: "spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer"
+        enabled: true
+        voxel_decay: 3.0
+        decay_model: 0
+        voxel_size: 0.05
+        track_unknown_space: true
+        mark_threshold: 0
+        update_footprint_enabled: true
+        combination_method: 1
+        origin_z: 0.0
+        publish_voxel_map: false
+        transform_tolerance: 0.20
+        mapping_mode: false
+        map_save_duration: 60.0
+        observation_sources: realsense_mark realsense_clear
+        realsense_mark:
+          data_type: PointCloud2
+          topic: /camera/camera/depth/color/points
+          transport_type: raw
+          marking: true
+          clearing: false
+          obstacle_range: 3.0
+          min_obstacle_height: 0.05
+          max_obstacle_height: 1.8
+          expected_update_rate: 0.0
+          observation_persistence: 0.0
+          inf_is_valid: false
+          filter: voxel
+          voxel_min_points: 2
+          clear_after_reading: true
+        realsense_clear:
+          data_type: PointCloud2
+          topic: /camera/camera/depth/color/points
+          transport_type: raw
+          marking: false
+          clearing: true
+          max_z: 3.5
+          min_z: 0.20
+          min_obstacle_height: 0.05
+          max_obstacle_height: 1.8
+          vertical_fov_angle: 1.012
+          vertical_fov_padding: 0.05
+          horizontal_fov_angle: 1.518
+          decay_acceleration: 1.0
+          model_type: 0
+          filter: voxel
+          voxel_min_points: 2
       keepout_layer:
         plugin: "aid_costmap_plugin/KeepoutLayer"
         enabled: true
@@ -340,7 +395,7 @@ global_costmap:
       global_frame: map
       robot_base_frame: base_link
       update_frequency: 1.0
-      publish_frequency: 2.0
+      publish_frequency: 1.0
       transform_tolerance: 0.20
       resolution: 0.05
       robot_radius: 0.20  # 初始测试包络，实机姿态/手臂不得超出；上线前实测
@@ -356,6 +411,7 @@ global_costmap:
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: true
+        footprint_clearing_enabled: true
         combination_method: 1
         max_obstacle_height: 1.8
         observation_sources: livox

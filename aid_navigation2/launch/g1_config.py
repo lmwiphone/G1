@@ -8,7 +8,8 @@ import math
 
 
 def make_configs(stock, collision, *, floor_z, base_floor_z, cloud_topic,
-                 sensor_frame, robot_radius=0.250, ros_distro='jazzy'):
+                 sensor_frame, realsense_topic='', robot_radius=0.250,
+                 ros_distro='jazzy'):
     if not all(math.isfinite(v) for v in (floor_z, base_floor_z, robot_radius)):
         raise ValueError('Ground heights and radius must be finite')
     if robot_radius <= 0 or not cloud_topic or not sensor_frame:
@@ -37,25 +38,93 @@ def make_configs(stock, collision, *, floor_z, base_floor_z, cloud_topic,
                  resolution=0.05, transform_tolerance=0.20)
         p.pop('footprint', None)
         p['plugins'] = (['static_layer'] if name == 'global_costmap' else []) + [
-            'obstacle_layer', 'keepout_layer', 'inflation_layer']
+            'obstacle_layer']
+        # D435 只参与局部避障。STVL 在传感器输入端执行 voxel 滤波，
+        # 同时利用相机视锥清除已经离开的动态障碍。
+        if name == 'local_costmap' and realsense_topic:
+            p['plugins'].append('stvl_voxel_layer')
+        p['plugins'] += ['keepout_layer', 'inflation_layer']
         p.pop('voxel_layer', None)
         p.pop('stvl_voxel_layer', None)
-        p['obstacle_layer'] = {
-            'plugin': 'nav2_costmap_2d::ObstacleLayer', 'enabled': True,
-            'combination_method': 1, 'max_obstacle_height': floor_z + 1.8,
-            'observation_sources': 'livox',
+        observation_sources = {
             'livox': {'topic': cloud_topic, 'data_type': 'PointCloud2',
                       'sensor_frame': sensor_frame, 'marking': True, 'clearing': True,
                       'min_obstacle_height': floor_z + 0.10,
                       'max_obstacle_height': floor_z + 1.8,
                       'obstacle_min_range': 0.25, 'obstacle_max_range': 4.0,
-                      'raytrace_min_range': 0.25, 'raytrace_max_range': 5.0}}
+                      'raytrace_min_range': 0.25, 'raytrace_max_range': 5.0}
+        }
+        p['obstacle_layer'] = {
+            'plugin': 'nav2_costmap_2d::ObstacleLayer', 'enabled': True,
+            'footprint_clearing_enabled': True,
+            'combination_method': 1, 'max_obstacle_height': floor_z + 1.8,
+            'observation_sources': ' '.join(observation_sources),
+            **observation_sources}
+        if name == 'local_costmap' and realsense_topic:
+            # 不强制 sensor_frame：使用 PointCloud2.header.frame_id，通过 TF 变换到 map。
+            p['stvl_voxel_layer'] = {
+                'plugin': 'spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer',
+                'enabled': True,
+                'voxel_decay': 3.0,
+                'decay_model': 0,
+                'voxel_size': 0.05,
+                'track_unknown_space': True,
+                'mark_threshold': 0,
+                'update_footprint_enabled': True,
+                'combination_method': 1,
+                'origin_z': floor_z,
+                'publish_voxel_map': False,
+                'transform_tolerance': 0.20,
+                'mapping_mode': False,
+                'map_save_duration': 60.0,
+                'observation_sources': 'realsense_mark realsense_clear',
+                'realsense_mark': {
+                    'data_type': 'PointCloud2',
+                    'topic': realsense_topic,
+                    'transport_type': 'raw',
+                    'marking': True,
+                    'clearing': False,
+                    'obstacle_range': 3.0,
+                    'min_obstacle_height': floor_z + 0.05,
+                    'max_obstacle_height': floor_z + 1.8,
+                    'expected_update_rate': 0.0,
+                    'observation_persistence': 0.0,
+                    'inf_is_valid': False,
+                    'filter': 'voxel',
+                    # 至少两个点落入 5 cm 体素才标记，过滤单点飞点。
+                    'voxel_min_points': 2,
+                    'clear_after_reading': True,
+                },
+                'realsense_clear': {
+                    'data_type': 'PointCloud2',
+                    'topic': realsense_topic,
+                    'transport_type': 'raw',
+                    'marking': False,
+                    'clearing': True,
+                    'max_z': 3.5,
+                    'min_z': 0.20,
+                    'min_obstacle_height': floor_z + 0.05,
+                    'max_obstacle_height': floor_z + 1.8,
+                    # D435 深度视场约为 87 x 58 度。
+                    'vertical_fov_angle': 1.012,
+                    'vertical_fov_padding': 0.05,
+                    'horizontal_fov_angle': 1.518,
+                    'decay_acceleration': 1.0,
+                    'model_type': 0,
+                    'filter': 'voxel',
+                    'voxel_min_points': 2,
+                },
+            }
         p['inflation_layer'].update(inflation_radius=max(0.60, robot_radius + 0.20))
         if name == 'local_costmap':
-            p.update(width=6, height=6, rolling_window=True)
+            # 控制器为 10 Hz，局部障碍地图同步到相同更新频率；发布频率只影响可视化/网络。
+            p.update(width=6, height=6, rolling_window=True,
+                     update_frequency=10.0, publish_frequency=5.0)
+        else:
+            p.update(update_frequency=1.0, publish_frequency=1.0)
     behavior = nav['behavior_server']['ros__parameters']
     behavior.update(local_frame='map', global_frame='map', enable_stamped_cmd_vel=False,
-                    max_rotational_vel=0.25, min_rotational_vel=0.10, rotational_acc_lim=0.60)
+                    max_rotational_vel=0.9, min_rotational_vel=0.8, rotational_acc_lim=0.60)
     controller = nav['controller_server']['ros__parameters']
     controller.update(enable_stamped_cmd_vel=False, min_y_velocity_threshold=0.001,
                       odom_topic='/odom')
@@ -74,12 +143,13 @@ def make_configs(stock, collision, *, floor_z, base_floor_z, cloud_topic,
         controller.pop('progress_checker_plugins', None)
         controller['progress_checker_plugin'] = 'progress_checker'
     # Preserve the existing forward/turn-only command envelope, not a new lateral gait.
-    controller['FollowPath'].update(vx_max=0.15, vx_min=0.0, vy_max=0.0,
-                                     wz_max=0.25, visualize=False)
+    controller['FollowPath'].update(vx_max=0.5, vx_min=0.0, vy_max=0.0,
+                                     wz_max=0.9, visualize=False)
     smooth = nav['velocity_smoother']['ros__parameters']
     smooth.update(feedback='OPEN_LOOP', enable_stamped_cmd_vel=False,
-                  max_velocity=[0.15, 0.0, 0.25], min_velocity=[-0.15, 0.0, -0.25],
+                  max_velocity=[0.5, 0.0, 0.9], min_velocity=[0.0, 0.0, -0.9],
                   max_accel=[0.35, 0.35, 0.60], max_decel=[-0.35, -0.35, -0.60],
+                  deadband_velocity=[0.3, 0.0, 0.8],
                   velocity_timeout=0.20)
     smooth.pop('odom_topic', None)
     smooth.pop('odom_duration', None)

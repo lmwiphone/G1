@@ -27,6 +27,8 @@ def setup(context):
         yaml.safe_load((robot_share/'param/collision_monitor_params.yaml').read_text()),
         floor_z=float(get('floor_z')), base_floor_z=float(get('base_floor_z')),
         cloud_topic=get('cloud_topic'), sensor_frame=get('sensor_frame'),
+        realsense_topic=(get('realsense_topic')
+                         if get('use_realsense_obstacles') == 'true' else ''),
         robot_radius=float(get('robot_radius')), ros_distro=os.environ.get('ROS_DISTRO', 'jazzy'))
     if get('use_keepout') == 'false':
         for name in ('local_costmap', 'global_costmap'):
@@ -59,5 +61,7 @@ def generate_launch_description():
         DeclareLaunchArgument('base_floor_z', default_value='0.0', description='Ground-projected base_link: ground Z=0'),
         DeclareLaunchArgument('cloud_topic', default_value='/livox/points'),
         DeclareLaunchArgument('sensor_frame', default_value='mid360_link'),
+        DeclareLaunchArgument('use_realsense_obstacles', default_value='false', choices=['true', 'false']),
+        DeclareLaunchArgument('realsense_topic', default_value='/camera/camera/depth/color/points'),
         DeclareLaunchArgument('robot_radius', default_value='0.250', description='Initial test envelope; verify on robot'),
         OpaqueFunction(function=setup)])

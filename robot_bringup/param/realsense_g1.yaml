@@ -1,0 +1,5 @@
+# RealSense ROS 4.58.x 在 Jetson/ARM64 上会把 librealsense 的
+# "Pointcloud (NEON)" 转成 pointcloud__neon_ 参数前缀。
+# 官方 rs_launch.py 仍只传 pointcloud.enable，因此需要同时覆盖实际参数。
+pointcloud__neon_.enable: true
+pointcloud__neon_.allow_no_texture_points: true

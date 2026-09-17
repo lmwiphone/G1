@@ -12,7 +12,9 @@ find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(unitree_api REQUIRED)
+find_package(unitree_hg REQUIRED)
 
 include_directories(
   include
@@ -32,9 +34,13 @@ target_include_directories(cmdvel_to_sport PRIVATE
 ament_target_dependencies(cmdvel_to_sport
   geometry_msgs rclcpp unitree_api)
 
+add_executable(battery_state_bridge src/battery_state_bridge.cpp)
+ament_target_dependencies(battery_state_bridge
+  rclcpp sensor_msgs unitree_hg)
+
 ament_python_install_package(${PROJECT_NAME})
 
-install(TARGETS cmdvel_to_sport
+install(TARGETS cmdvel_to_sport battery_state_bridge
   DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/
   DESTINATION include)
