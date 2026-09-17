@@ -94,9 +94,17 @@ class SlamSystem {
 
     Keyframe::Ptr cur_kf_ = nullptr;
 
+    /// 把 LIO 当前帧转到世界系后发布为 PointCloud2（诊断用，不影响建图结果）
+    void PublishRegisteredScan();
+
     /// 实时模式下的ros2 node, subscribers
     rclcpp::Node::SharedPtr node_;
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr map_pub_;
+    /// 诊断用：LIO 去畸变并转到世界系的当前帧点云。只读取算法结果，不参与任何计算。
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr scan_pub_;
+    bool pub_registered_scan_ = false;
+    double registered_scan_leaf_ = 0.0;
+    std::string registered_scan_frame_ = "map";
     std::string imu_topic_;
     std::string cloud_topic_;
     std::string livox_topic_;

@@ -32,6 +32,9 @@ def setup(context):
                           ('max_obstacle_height', 'max_th_floor')]:
         if value(argument):
             config['g2p5'][key] = float(value(argument))
+    # 诊断话题开关只能经 yaml 下发：lightning 可执行文件用 gflags 解析 argv，
+    # 传 --ros-args 会被当成未知 flag 直接报错退出。
+    config['system']['pub_registered_scan'] = enabled('pub_registered_scan')
     config['system'].update(with_ui=enabled('with_ui'), with_2dui=enabled('with_2dui'),
                             map_path=os.path.abspath(os.path.expanduser(value('map_path'))),
                             map_save_root=os.path.abspath(
@@ -84,6 +87,7 @@ def generate_launch_description():
                     map_save_root=os.path.expanduser('~/maps'),
                     lidar_topic='/livox/lidar', imu_topic='/livox/imu', start_livox='false',
                     with_ui='false', with_2dui='false', start_rviz='false',
+                    pub_registered_scan='false',
                     rviz_config='',
                     floor_height='', min_obstacle_height='',
                     max_obstacle_height='',

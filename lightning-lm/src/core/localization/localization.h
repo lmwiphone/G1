@@ -82,8 +82,15 @@ class Localization {
 
     void SetTFCallback(TFCallback&& callback);
 
+    /// 注册“配准后世界系点云”回调（诊断用）。回调收到的是 LIO 去畸变、
+    /// 并按当次定位位姿摆到 map 系的点云，与 UI 里渲染的是同一份数据。
+    /// 纯旁路输出，不回写任何算法状态。
+    void SetPointcloudWorldCallback(PointcloudWorldCallback&& callback);
+
+    /// 每帧把 LIO 去畸变扫描按 TF 位姿摆到 map 系并经回调发出（诊断用）
+    void PublishRegisteredScan();
+
     // void SetPathCallback(std::function<void(const nav_msgs::msg::Path& path)>&& callback);
-    // void SetPointcloudWorldCallback(std::function<void(const sensor_msgs::msg::PointCloud2& pointcloud)>&& callback);
     // void SetPointcloudBodyCallback(std::function<void(const sensor_msgs::msg::PointCloud2& pointcloud)>&& callback);
     // void SetLocStateCallback(std::function<void(const std_msgs::msg::Int32& state)>&& callback);
     // void SetHealthDiagNormalCallback(interface::health_diag_normal_callback&& callback);

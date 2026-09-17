@@ -1,5 +1,38 @@
-# RealSense ROS 4.58.x 在 Jetson/ARM64 上会把 librealsense 的
-# "Pointcloud (NEON)" 转成 pointcloud__neon_ 参数前缀。
-# 官方 rs_launch.py 仍只传 pointcloud.enable，因此需要同时覆盖实际参数。
+# D435 点云配置。点云只喂 Nav2 local costmap 的 STVL，STVL 只用 XYZ 标记/清除障碍。
+#
+# ============================ 参数前缀的坑 ============================
+# 节点上点云滤波器的真实参数前缀【不是】 pointcloud.，而是取自 librealsense
+# 给该滤波器的名字。Jetson/ARM64 上启用 NEON 后名字是 "Pointcloud (NEON)"，
+# 被 ROS 规范化成 pointcloud__neon_。实测（2026-09-17，Thor）：
+#   ros2 param list /camera/camera | grep point
+#     pointcloud__neon_.enable / .stream_filter / .allow_no_texture_points / .ordered_pc
+#   而 pointcloud.enable 等名字在节点上【不存在】，设了等于没设。
+#
+# 【不要被 rs_launch.py 的警告误导】它打印的
+#     "Parameter 'pointcloud__neon_.xxx' in config file is not supported"
+# 只是拿它自己的 launch 参数清单做校验，【不反映节点的真实参数名】。
+# 本文件是通过 config_file 直接透传给节点的（rs_launch.py 里
+# parameters=[params, params_from_file]），所以带 __neon_ 前缀的参数确实生效，
+# 那条警告是误报。2026-09-17 曾有人据此警告把前缀改成 pointcloud.，
+# 结果点云被整个关掉、话题都不存在了。
+#
+# 同时写两套前缀是为了可移植：非 NEON 构建上前缀为 pointcloud.，
+# 节点未声明的参数会被静默忽略，不会报错。
+# =====================================================================
+
+# --- ARM/NEON（Thor 实际生效的一套）---
 pointcloud__neon_.enable: true
+# 0 = RS2_STREAM_ANY，不做纹理映射：走 pointcloud_filter.cpp:218 的无纹理分支，
+# 只判 vertex.z>0，无提前 return，输出纯 XYZ。
+# 非 0（如 2=COLOR）会走有纹理分支，在 frameset 里找不到匹配纹理帧就直接 return，
+# 表现为点云一帧不发（见 pointcloud_filter.cpp:105-115）。
+pointcloud__neon_.stream_filter: 0
 pointcloud__neon_.allow_no_texture_points: true
+# ordered_pc=true 会按 depth 分辨率输出全部像素（含无效点），带宽显著变大，STVL 不需要。
+pointcloud__neon_.ordered_pc: false
+
+# --- 非 NEON 构建的等价配置（在 Thor 上不生效，留作可移植）---
+pointcloud.enable: true
+pointcloud.stream_filter: 0
+pointcloud.allow_no_texture_points: true
+pointcloud.ordered_pc: false

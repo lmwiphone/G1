@@ -72,6 +72,30 @@ bool LocSystem::Init(const std::string &yaml_path) {
             [this](const geometry_msgs::msg::TransformStamped &pose) { PublishBaseTF(pose); });
     }
 
+    // 诊断话题：把配准后的点云（LIO 去畸变 + 定位位姿，与 UI 同源）发布到 map 系，
+    // 便于在 RViz 里直接看 SLAM 用的是什么点云、配准结果落在哪。默认关闭。
+    //
+    // 开关放在 yaml 的 system.pub_registered_scan，而不是只靠 ROS 参数：
+    // 本可执行文件用 gflags 解析 argv（run_loc_online.cc:20 ParseCommandLineFlags），
+    // 遇到 --ros-args 这类未知 flag 会直接报错退出，所以 launch 侧无法用
+    // "-p name:=value" 传参，只能经 --config 的 yaml 下发。
+    // 仍保留 ROS 参数声明，便于 ros2 param get 查看当前值。
+    // 键缺失时 YAML_IO::GetValue 会抛 YAML::TypedBadConversion，必须兜底。
+    bool pub_scan = false;
+    try {
+        pub_scan = yaml.GetValue<bool>("system", "pub_registered_scan");
+    } catch (const std::exception &) {
+        pub_scan = false;  // 老配置文件没有该键，保持关闭
+    }
+    pub_scan = node_->declare_parameter<bool>("pub_registered_scan", pub_scan);
+    if (pub_scan) {
+        scan_pub_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>(
+            "/lightning/registered_scan", rclcpp::QoS(2));
+        loc_->SetPointcloudWorldCallback(
+            [this](const sensor_msgs::msg::PointCloud2 &cloud) { scan_pub_->publish(cloud); });
+        LOG(INFO) << "publishing registered scan on /lightning/registered_scan (frame=map)";
+    }
+
     bool ret = loc_->Init(yaml_path, map_path);
     if (ret) {
         LOG(INFO) << "online loc node has been created.";

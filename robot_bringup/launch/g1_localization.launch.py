@@ -19,6 +19,8 @@ def generate_launch_description():
         DeclareLaunchArgument('with_ui', default_value='false'),
         DeclareLaunchArgument('with_2dui', default_value='false'),
         DeclareLaunchArgument('start_rviz', default_value='false'),
+        DeclareLaunchArgument('pub_registered_scan', default_value='false',
+                              description='发布 map 系配准点云 /lightning/registered_scan（诊断用）'),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(lightning_launch),
             launch_arguments={
@@ -27,6 +29,7 @@ def generate_launch_description():
                 'with_ui': LaunchConfiguration('with_ui'),
                 'with_2dui': LaunchConfiguration('with_2dui'),
                 'start_rviz': LaunchConfiguration('start_rviz'),
+                'pub_registered_scan': LaunchConfiguration('pub_registered_scan'),
             }.items(),
         ),
     ])

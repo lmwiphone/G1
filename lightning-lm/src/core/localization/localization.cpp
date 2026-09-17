@@ -1,6 +1,7 @@
 #include <pcl/common/transforms.h>
 #include <pcl_conversions/pcl_conversions.h>
 
+#include "core/lightning_math.hpp"
 #include "core/localization/lidar_loc/lidar_loc.h"
 #include "core/localization/localization.h"
 
@@ -173,6 +174,47 @@ void Localization::ProcessLivoxLidarMsg(const livox_ros_driver2::msg::CustomMsg:
     }
 }
 
+
+// 诊断输出：把 LIO 去畸变后的当前扫描，按【实际发布成 TF 的那个位姿】摆到 map 系。
+// 位姿取 loc_result_（PGO 融合结果，与 tf_callback_ 同源），保证 RViz 里点云与 TF 严格一致。
+// 注意必须在 lio_->GetProjCloud() 之前调用：那个函数会把投影关键帧点【原地追加】到
+// scan_undistort_ 里，之后再取就不是纯净的单帧了。
+void Localization::PublishRegisteredScan() {
+    if (!pointcloud_world_callback_ || lio_ == nullptr) {
+        return;
+    }
+    const LocalizationResult tf_res = loc_result_;
+    if (!tf_res.valid_) {
+        return;
+    }
+    CloudPtr scan = lio_->GetScanUndist();
+    if (scan == nullptr || scan->empty()) {
+        return;
+    }
+
+    PointCloudType world;
+    world.points.reserve(scan->size());
+    for (const auto& pt : scan->points) {
+        const Vec3d p = tf_res.pose_ * Vec3d(pt.x, pt.y, pt.z);
+        PointType out;
+        out.x = static_cast<float>(p.x());
+        out.y = static_cast<float>(p.y());
+        out.z = static_cast<float>(p.z());
+        out.intensity = pt.intensity;
+        out.time = pt.time;
+        world.points.emplace_back(out);
+    }
+    world.width = world.points.size();
+    world.height = 1;
+    world.is_dense = false;
+
+    sensor_msgs::msg::PointCloud2 msg;
+    pcl::toROSMsg(world, msg);
+    msg.header.frame_id = "map";
+    msg.header.stamp = math::FromSec(tf_res.timestamp_);
+    pointcloud_world_callback_(msg);
+}
+
 void Localization::LidarOdomProcCloud(CloudPtr cloud) {
     if (lio_ == nullptr) {
         return;
@@ -191,6 +233,9 @@ void Localization::LidarOdomProcCloud(CloudPtr cloud) {
 
     // LOG(INFO) << "LO pose: " << std::setprecision(12) << lo_state.timestamp_ << " "
     //           << lo_state.GetPose().translation().transpose();
+
+    // 每帧发布（10Hz）。必须在 GetProjCloud() 之前，否则拿到的点云已被投影关键帧污染。
+    PublishRegisteredScan();
 
     /// 获得lio的关键帧
 
@@ -347,5 +392,9 @@ void Localization::SetExternalPose(const Eigen::Quaterniond& q, const Eigen::Vec
 }
 
 void Localization::SetTFCallback(Localization::TFCallback&& callback) { tf_callback_ = callback; }
+
+void Localization::SetPointcloudWorldCallback(Localization::PointcloudWorldCallback&& callback) {
+    pointcloud_world_callback_ = callback;
+}
 
 }  // namespace lightning::loc

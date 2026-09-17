@@ -4,6 +4,7 @@
 
 #include "core/system/slam.h"
 #include "core/g2p5/g2p5.h"
+#include "core/lightning_math.hpp"
 #include "core/lio/laser_mapping.h"
 #include "core/loop_closing/loop_closing.h"
 #include "core/maps/tiled_map.h"
@@ -96,6 +97,28 @@ bool SlamSystem::Init(const std::string& yaml_path) {
         if (options_.with_gridmap_) {
             map_pub_ = node_->create_publisher<nav_msgs::msg::OccupancyGrid>(
                 "/map", rclcpp::QoS(1).reliable().transient_local());
+        }
+
+        // 诊断话题：把 LIO 去畸变后的当前帧摆到世界系发布出来，方便在 RViz 里
+        // 直接看清 SLAM 实际拿什么点云在做配准、配准结果落在哪里。
+        // 默认关闭；纯旁路输出，不回写任何算法状态。
+        // 开关来自 yaml 的 system 段，而不是只靠 ROS 参数：本可执行文件用 gflags
+        // 解析 argv（run_slam_online.cc 的 ParseCommandLineFlags），遇到 --ros-args
+        // 这类未知 flag 会直接报错退出，因此 launch 侧无法用 "-p name:=value" 传参，
+        // 只能经 --config 的 yaml 下发。仍保留 ROS 参数声明便于 ros2 param get 查看。
+        // as<T>(default) 在键缺失时返回默认值，兼容老配置文件。
+        pub_registered_scan_ = node_->declare_parameter<bool>(
+            "pub_registered_scan", yaml["system"]["pub_registered_scan"].as<bool>(false));
+        registered_scan_leaf_ = node_->declare_parameter<double>(
+            "registered_scan_leaf", yaml["system"]["registered_scan_leaf"].as<double>(0.0));
+        registered_scan_frame_ = node_->declare_parameter<std::string>(
+            "registered_scan_frame",
+            yaml["system"]["registered_scan_frame"].as<std::string>("map"));
+        if (pub_registered_scan_) {
+            scan_pub_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>(
+                "/lightning/registered_scan", rclcpp::QoS(2));
+            LOG(INFO) << "publishing registered scan on /lightning/registered_scan, frame="
+                      << registered_scan_frame_ << ", leaf=" << registered_scan_leaf_;
         }
 
         imu_topic_ = yaml["common"]["imu_topic"].as<std::string>();
@@ -280,6 +303,58 @@ void SlamSystem::SaveMap(const std::string& path) {
     LOG(INFO) << "map saved";
 }
 
+void SlamSystem::PublishRegisteredScan() {
+    if (!pub_registered_scan_ || scan_pub_ == nullptr || lio_ == nullptr) {
+        return;
+    }
+
+    // scan_undistort_ 是 IMU 逐点去畸变后、位于扫描结束时刻【雷达系】的点云，
+    // 也正是送进 LIO 点面配准的那份数据。
+    CloudPtr scan = lio_->GetScanUndist();
+    if (scan == nullptr || scan->empty()) {
+        return;
+    }
+
+    // 与 Lightning 自身投影关键帧、拼全局地图时的约定保持一致：直接用 LIO 位姿
+    // 左乘点。注意该约定未显式乘 lidar->IMU 外参，这里刻意不做“修正”，
+    // 以保证发布的点云与 Lightning 内部地图完全同源、可直接叠加比对。
+    const NavState state = lio_->GetState();
+    const SE3 pose = state.GetPose();
+
+    PointCloudType world;
+    world.points.reserve(scan->size());
+    const double leaf = registered_scan_leaf_;
+    for (const auto& pt : scan->points) {
+        const Vec3d p = pose * Vec3d(pt.x, pt.y, pt.z);
+        PointType out;
+        out.x = static_cast<float>(p.x());
+        out.y = static_cast<float>(p.y());
+        out.z = static_cast<float>(p.z());
+        out.intensity = pt.intensity;
+        out.time = pt.time;
+        world.points.emplace_back(out);
+    }
+
+    CloudPtr cloud(new PointCloudType);
+    if (leaf > 0.0) {
+        pcl::VoxelGrid<PointType> voxel;
+        voxel.setLeafSize(leaf, leaf, leaf);
+        voxel.setInputCloud(world.makeShared());
+        voxel.filter(*cloud);
+    } else {
+        *cloud = world;
+    }
+    cloud->width = cloud->points.size();
+    cloud->height = 1;
+    cloud->is_dense = false;
+
+    sensor_msgs::msg::PointCloud2 msg;
+    pcl::toROSMsg(*cloud, msg);
+    msg.header.frame_id = registered_scan_frame_;
+    msg.header.stamp = math::FromSec(state.timestamp_);
+    scan_pub_->publish(msg);
+}
+
 void SlamSystem::ProcessIMU(const lightning::IMUPtr& imu) {
     if (running_ == false) {
         return;
@@ -294,6 +369,9 @@ void SlamSystem::ProcessLidar(const sensor_msgs::msg::PointCloud2::SharedPtr& cl
 
     lio_->ProcessPointCloud2(cloud);
     lio_->Run();
+
+    // 放在关键帧判定之前，保证每一帧都能看到，而不是只有关键帧才更新。
+    PublishRegisteredScan();
 
     auto kf = lio_->GetKeyframe();
     if (kf != cur_kf_) {
@@ -326,6 +404,9 @@ void SlamSystem::ProcessLidar(const livox_ros_driver2::msg::CustomMsg::SharedPtr
 
     lio_->ProcessPointCloud2(cloud);
     lio_->Run();
+
+    // 放在关键帧判定之前，保证每一帧都能看到，而不是只有关键帧才更新。
+    PublishRegisteredScan();
 
     auto kf = lio_->GetKeyframe();
     if (kf != cur_kf_) {

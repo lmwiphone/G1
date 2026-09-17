@@ -26,10 +26,16 @@
     <!--
       MID360 height relative to the planar ground navigation frame.
       LiDAR inversion is already handled in the driver.
+
+      pitch = -2.3 deg = -0.04014257279586953 rad。
+      Unitree 官方外参文档明确：Mid360 在 G1 上采用【倒置】安装，
+      pitch 轴倾角为 -2.3°，yaw 与 roll 无倾斜。
+      2026-09-17 之前这里写成 +0.04014（正号），导致 map->base_link 整体
+      俯仰倾斜约 2 倍该角度。
     -->
     <origin
       xyz="0.0002835 0.00003 1.23618"
-      rpy="0 0.04014257279586953 0"/>
+      rpy="0 -0.04014257279586953 0"/>
   </joint>
 
   <!-- d435 -->

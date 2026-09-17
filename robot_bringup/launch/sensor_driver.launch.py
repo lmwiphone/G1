@@ -33,6 +33,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'realsense_serial_no', default_value="'347622073141'"),
         DeclareLaunchArgument('realsense_initial_reset', default_value='false'),
+        DeclareLaunchArgument(
+            'realsense_enable_color', default_value='true', choices=['true', 'false'],
+            description='点云不再需要 color；纯避障场景可设 false 省带宽'),
         DeclareLaunchArgument('realsense_config', default_value=os.path.join(
             get_package_share_directory('robot_bringup'), 'param',
             'realsense_g1.yaml')),
@@ -58,8 +61,10 @@ def generate_launch_description():
                 'initial_reset': LaunchConfiguration('realsense_initial_reset'),
                 'config_file': LaunchConfiguration('realsense_config'),
                 'enable_depth': 'true',
-                # pointcloud 默认使用 color 纹理，因此 color 必须同时开启。
-                'enable_color': 'true',
+                # 点云已在 realsense_g1.yaml 里关闭纹理映射（stream_filter=0），
+                # 因此点云不再依赖 color 流。这里保留 color 开关供调试使用，
+                # 只做避障时可以 realsense_enable_color:=false 省一半 USB 带宽。
+                'enable_color': LaunchConfiguration('realsense_enable_color'),
                 'pointcloud.enable': 'true',
                 'pointcloud.allow_no_texture_points': 'true',
                 'align_depth.enable': 'false',

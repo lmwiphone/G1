@@ -49,6 +49,7 @@ def generate_launch_description():
             'start_realsense': start_realsense,
             'realsense_serial_no': LaunchConfiguration('realsense_serial_no'),
             'realsense_initial_reset': LaunchConfiguration('realsense_initial_reset'),
+            'realsense_enable_color': LaunchConfiguration('realsense_enable_color'),
         }.items(),
     )
 
@@ -75,6 +76,7 @@ def generate_launch_description():
             'with_ui': with_ui,
             'with_2dui': with_2dui,
             'start_rviz': start_rviz,
+            'pub_registered_scan': LaunchConfiguration('pub_registered_scan'),
             'start_map_transform': PythonExpression([
                 "'false' if '", LaunchConfiguration('start_backend'), "' == 'true' else 'true'"
             ]),
@@ -93,6 +95,7 @@ def generate_launch_description():
             'with_ui': with_ui,
             'with_2dui': with_2dui,
             'start_rviz': start_rviz,
+            'pub_registered_scan': LaunchConfiguration('pub_registered_scan'),
         }.items(),
     )
 
@@ -143,7 +146,13 @@ def generate_launch_description():
             Node(package='aid_robot_py', executable='launch_manager_node',
                  name='launch_manager_node', prefix=['taskset -c 3-7'], output='screen',
                  parameters=[{'use_sim_time': use_sim_time}]),
+            # 禁行区地图节点只在 use_keepout:=true 时启动。
+            # keepout 关闭时没有 keepout_filter_map 的订阅者，该节点每收到一帧 /map
+            # 就会去调用不存在的 get_current_forbidden 服务，产生
+            # "get_forbidden_client return false" 噪声；并且它与导航栈另一份同名
+            # 实例共存时会触发 "Publisher already registered for node name"。
             Node(package='robot_bringup', executable='forbidden_map_create_node',
+                 condition=IfCondition(LaunchConfiguration('use_keepout')),
                  name='forbidden_map_create_node', prefix=['taskset -c 3-7'], output='screen',
                  parameters=[{'use_sim_time': use_sim_time}]),
             Node(package='aid_robot_py', executable='waypoint_manage_node',
@@ -167,6 +176,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'realsense_serial_no', default_value="'347622073141'"),
         DeclareLaunchArgument('realsense_initial_reset', default_value='false'),
+        DeclareLaunchArgument(
+            'realsense_enable_color', default_value='true', choices=['true', 'false'],
+            description='点云不再需要 color；纯避障场景可设 false 省带宽'),
         DeclareLaunchArgument('start_rosbridge', default_value='true'),
         DeclareLaunchArgument('start_backend', default_value='true'),
         DeclareLaunchArgument('with_ui', default_value='false'),
@@ -194,6 +206,9 @@ def generate_launch_description():
             'use_collision_monitor', default_value='false', choices=['true', 'false'],
             description='仅 navigation 模式使用；完成独立验收前默认关闭'),
         DeclareLaunchArgument('use_keepout', default_value='false', choices=['true', 'false']),
+        DeclareLaunchArgument(
+            'pub_registered_scan', default_value='true', choices=['true', 'false'],
+            description='发布 map 系配准点云 /lightning/registered_scan（默认开启，便于在 RViz 直接看配准结果）'),
         DeclareLaunchArgument(
             'livox_config',
             default_value=os.path.join(
