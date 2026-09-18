@@ -16,7 +16,7 @@ DEFINE_string(config, "./config/default.yaml", "配置文件");
 int main(int argc, char** argv) {
     google::InitGoogleLogging(argv[0]);
     FLAGS_colorlogtostderr = true;
-    FLAGS_stderrthreshold = google::INFO;
+    FLAGS_stderrthreshold = google::ERROR;  // 终端只打 ERROR，完整日志见 /tmp/<程序名>.INFO
     google::ParseCommandLineFlags(&argc, &argv, true);
 
     using namespace lightning;

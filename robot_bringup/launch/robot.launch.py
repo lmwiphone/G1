@@ -13,6 +13,7 @@ from launch.actions import (
     DeclareLaunchArgument,
     GroupAction,
     IncludeLaunchDescription,
+    OpaqueFunction,
     SetLaunchConfiguration,
 )
 from launch.conditions import IfCondition
@@ -22,9 +23,50 @@ from launch_ros.actions import Node
 
 
 def _is_mode(*modes):
+    """顶层直接拥有 SLAM/Nav2 的条件：模式匹配且未启动后台。
+
+    start_backend:=true（默认，前端 UI 使用）时，定位/导航/建图统一由
+    robot_status_manager_node 经 launch_manager 启停，前端才能切换模式；
+    这里不再重复创建，避免两套同名进程。
+    """
     return IfCondition(PythonExpression([
-        "'", LaunchConfiguration('requested_mode'), "' in ", repr(tuple(modes))
+        "'", LaunchConfiguration('requested_mode'), "' in ", repr(tuple(modes)),
+        " and '", LaunchConfiguration('start_backend'), "'.lower() != 'true'",
     ]))
+
+
+def _launch_args(context, *names, **fixed):
+    """把顶层参数拼成子 launch 参数串（空值跳过，交给子 launch 默认值）。"""
+    pairs = [(n, LaunchConfiguration(n).perform(context)) for n in names]
+    pairs += list(fixed.items())
+    return ' '.join(f'{k}:={v}' for k, v in pairs if v != '')
+
+
+def _status_manager(context):
+    use_sim_time = LaunchConfiguration('use_sim_time')
+    return [Node(
+        package='robot_bringup', executable='robot_status_manager_node',
+        name='robot_status_manager_node', prefix=['taskset -c 3-7'], output='screen',
+        # 本节点是 SLAM/Nav2 的唯一所有者：按 startup_mode 拉起，之后由前端
+        # mode_set 切换建图/定位。参数透传保证与顶层直接启动时配置一致。
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'manage_stack': True,
+            'startup_mode': LaunchConfiguration('requested_mode').perform(context),
+            'default_map_dir': LaunchConfiguration('map_dir').perform(context),
+            'localization_launch_args': _launch_args(
+                context, 'with_ui', 'with_2dui', 'start_rviz', 'pub_registered_scan'),
+            'navigation_launch_args': _launch_args(
+                context, 'cloud_topic', 'sensor_frame', 'use_realsense_obstacles',
+                'realsense_topic', 'robot_radius', 'use_collision_monitor', 'use_keepout',
+                start_bridge='true'),
+            'mapping_launch_args': _launch_args(
+                context, 'map_save_root', 'with_ui', 'with_2dui', 'start_rviz',
+                'pub_registered_scan', 'floor_height', 'min_obstacle_height',
+                'max_obstacle_height',
+                # 后台已有 map_transform_node
+                start_map_transform='false'),
+        }])]
 
 
 def generate_launch_description():
@@ -131,26 +173,15 @@ def generate_launch_description():
             Node(package='aid_robot_py', executable='map_manager_node',
                  name='map_manager_node', prefix=['taskset -c 3-7'], output='screen',
                  parameters=[{'use_sim_time': use_sim_time}]),
-            Node(package='robot_bringup', executable='robot_status_manager_node',
-                 name='robot_status_manager_node', prefix=['taskset -c 3-7'], output='screen',
-                 # 定位/Nav2 已由本顶层 launch 创建。禁止状态管理节点再经由
-                 # launch_manager 启动第二套相同进程。
-                 parameters=[{
-                     'use_sim_time': use_sim_time,
-                     'manage_stack': False,
-                     'startup_mode': LaunchConfiguration('requested_mode'),
-                 }]),
+            OpaqueFunction(function=_status_manager),
             Node(package='aid_robot_py', executable='map_transform_node',
                  name='map_transform_node', prefix=['taskset -c 3-7'], output='screen',
                  parameters=[{'use_sim_time': use_sim_time}]),
             Node(package='aid_robot_py', executable='launch_manager_node',
                  name='launch_manager_node', prefix=['taskset -c 3-7'], output='screen',
                  parameters=[{'use_sim_time': use_sim_time}]),
-            # 禁行区地图节点只在 use_keepout:=true 时启动。
-            # keepout 关闭时没有 keepout_filter_map 的订阅者，该节点每收到一帧 /map
-            # 就会去调用不存在的 get_current_forbidden 服务，产生
-            # "get_forbidden_client return false" 噪声；并且它与导航栈另一份同名
-            # 实例共存时会触发 "Publisher already registered for node name"。
+            # 禁行区地图节点只在 use_keepout:=true（默认）时启动：前端画禁行线走
+            # /aid_draw_forbidden_line，由它生成 /keepout_filter_map 给 Nav2 keepout 层。
             Node(package='robot_bringup', executable='forbidden_map_create_node',
                  condition=IfCondition(LaunchConfiguration('use_keepout')),
                  name='forbidden_map_create_node', prefix=['taskset -c 3-7'], output='screen',
@@ -192,7 +223,8 @@ def generate_launch_description():
         DeclareLaunchArgument('max_obstacle_height', default_value=''),
         DeclareLaunchArgument('floor_z', default_value='0.0'),
         DeclareLaunchArgument('base_floor_z', default_value='0.0'),
-        DeclareLaunchArgument('cloud_topic', default_value='/livox/points'),
+        DeclareLaunchArgument('cloud_topic', default_value='/lightning/registered_scan',
+                              description='Nav2 雷达障碍点云：Lightning 配准后的 map 系单帧点云（需 pub_registered_scan:=true）'),
         DeclareLaunchArgument('sensor_frame', default_value='mid360_link'),
         DeclareLaunchArgument(
             'realsense_topic',
@@ -205,7 +237,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'use_collision_monitor', default_value='false', choices=['true', 'false'],
             description='仅 navigation 模式使用；完成独立验收前默认关闭'),
-        DeclareLaunchArgument('use_keepout', default_value='false', choices=['true', 'false']),
+        DeclareLaunchArgument('use_keepout', default_value='true', choices=['true', 'false']),
         DeclareLaunchArgument(
             'pub_registered_scan', default_value='true', choices=['true', 'false'],
             description='发布 map 系配准点云 /lightning/registered_scan（默认开启，便于在 RViz 直接看配准结果）'),

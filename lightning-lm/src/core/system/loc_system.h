@@ -5,6 +5,7 @@
 #ifndef LIGHTNING_LOC_SYSTEM_H
 #define LIGHTNING_LOC_SYSTEM_H
 
+#include <tf2_ros/static_transform_broadcaster.h>
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_msgs/msg/tf_message.hpp>
@@ -69,7 +70,14 @@ class LocSystem {
     rclcpp::Subscription<tf2_msgs::msg::TFMessage>::SharedPtr static_tf_sub_;
     std::mutex extrinsic_mutex_;
     bool extrinsic_ready_ = false;
-    SE3 lidar_to_base_;  // T_lidar_base = inverse(T_base_lidar)
+    SE3 lidar_to_base_;  // T_lidar_parent = inverse(T_parent_lidar)，parent 为 body_link（平面模式）或 base_link
+    // 平面模式：URDF 以 body_link（躯干）为根时启用。map->base_link 只含位置与航向，
+    // 躯干倾斜由 base_link->body_link 动态发布。URDF 无 body_link 时退回 6DoF base_link。
+    bool planar_base_ = false;
+    std::string body_frame_ = "body_link";
+    std::string footprint_frame_ = "base_footprint";
+    std::shared_ptr<tf2_ros::StaticTransformBroadcaster> static_tf_broadcaster_ = nullptr;
+    double map_z_offset_ = 0.0;  // map 帧竖直偏移，使 z=0 落在地面
     std::string base_frame_ = "base_link";
     std::string lidar_frame_ = "mid360_link";
 

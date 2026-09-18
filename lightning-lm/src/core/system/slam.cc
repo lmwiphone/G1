@@ -36,6 +36,8 @@ bool SlamSystem::Init(const std::string& yaml_path) {
     options_.with_2dvisualization_ = yaml["system"]["with_2dui"].as<bool>();
     options_.with_gridmap_ = yaml["system"]["with_g2p5"].as<bool>();
     options_.step_on_kf_ = yaml["system"]["step_on_kf"].as<bool>();
+    gravity_aligned_map_ = yaml["fasterlio"]["gravity_align_init"] &&
+                           yaml["fasterlio"]["gravity_align_init"].as<bool>();
     map_save_root_ = yaml["system"]["map_save_root"]
                          ? yaml["system"]["map_save_root"].as<std::string>()
                          : "./data";
@@ -242,6 +244,10 @@ void SlamSystem::SaveMap(const std::string& path) {
     tm.ConvertFromFullPCD(global_map, start_pose, save_path);
 
     pcl::io::savePCDFileBinaryCompressed(save_path + "/global.pcd", *global_map);
+    if (gravity_aligned_map_) {
+        // 地图系重力上方向。定位的 lidar_loc.gravity_constrain 只在存在该文件时启用。
+        std::ofstream(save_path + "/gravity_up.txt") << "0 0 1\n";
+    }
     // pcl::io::savePCDFileBinaryCompressed(save_path + "/global_no_loop.pcd", *global_map_no_loop);
     // pcl::io::savePCDFileBinaryCompressed(save_path + "/global_raw.pcd", *global_map_raw);
 

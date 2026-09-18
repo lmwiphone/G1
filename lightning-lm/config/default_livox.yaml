@@ -41,6 +41,9 @@ fasterlio:
                  0, 1, 0,
                  0, 0, 1 ]
   keep_first_imu_estimation: false
+  # LIO 世界系对齐重力（z 向上）。关闭时世界系=首帧 IMU 系，雷达倾斜多少地图就倾斜多少，
+  # 会破坏 g2p5 按高度切 2D 栅格和 lidar_loc.gravity_constrain 的前提。定位只用 LIO 相对位姿，不受影响。
+  gravity_align_init: true
   kf_dis_th: 1.0
   kf_angle_th: 10.0
 
@@ -95,6 +98,10 @@ lidar_loc:
   filter_z_max: 30.0
   filter_z_min: -1.0
   force_2d: false
+  # 用 LIO 重力约束 NDT 结果的 roll/pitch（保留 NDT 航向与平移）。
+  # 2026-09-18：G1 站立处周围遮挡多，6DoF NDT 在 tilt 上退化，静止时 roll 被拉到 -7~-9°。
+  # 目标方向取 <map>/gravity_up.txt（地图系重力上方向，旧地图用地面+墙面法向实测）；缺省为 +z。
+  gravity_constrain: true
   grid_search_angle_range: 180.0
   grid_search_angle_step: 60
   lidar_loc_odom_th: 0.5

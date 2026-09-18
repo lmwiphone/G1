@@ -3,6 +3,13 @@ g1_cmdvel_to_sport:
     cmd_vel_topic: /cmd_vel_safe
     # 调用G1 LocoClient::SetVelocity，并由常驻response订阅异步检查本体返回码。
     duration: 0.5
+    # G1 双足不能原地转向。非零低速按方向提升到最小有效值（取代 smoother 死区置零）：
+    #   直行 vx>=vx_stop 时提到 min_vx；|wz|>=wz_stop 视为转弯，wz 提到 min_wz 且 vx 至少 turn_min_vx。
+    min_vx: 0.3
+    min_wz: 0.6
+    turn_min_vx: 0.2
+    vx_stop: 0.05
+    wz_stop: 0.15
 
 g1_sport_to_odom:
   ros__parameters:

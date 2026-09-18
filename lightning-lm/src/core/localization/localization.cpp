@@ -96,6 +96,13 @@ bool Localization::Init(const std::string& yaml_path, const std::string& global_
 
         loc_result_ = res;
 
+        {
+            auto rpy = math::SE3ToRollPitchYaw(res.pose_);  // 诊断：最终输出姿态（度）
+            LOG_EVERY_N(INFO, 50) << "hf output t: " << res.pose_.translation().transpose()
+                                  << ", rpy(deg): " << rpy.roll * 180 / M_PI << " " << rpy.pitch * 180 / M_PI
+                                  << " " << rpy.yaw * 180 / M_PI << ", parking: " << res.is_parking_;
+        }
+
         if (tf_callback_ && loc_result_.valid_) {
             tf_callback_(loc_result_.ToGeoMsg());
         }
@@ -175,16 +182,14 @@ void Localization::ProcessLivoxLidarMsg(const livox_ros_driver2::msg::CustomMsg:
 }
 
 
-// 诊断输出：把 LIO 去畸变后的当前扫描，按【实际发布成 TF 的那个位姿】摆到 map 系。
-// 位姿取 loc_result_（PGO 融合结果，与 tf_callback_ 同源），保证 RViz 里点云与 TF 严格一致。
+// 输出 LIO 去畸变后的当前扫描（雷达系，时间戳为该帧 lidar_end_time），供 RViz / Nav2 障碍层使用。
+// 不在这里摆到 map 系：loc_result_ 是外推到最新 IMU 时刻的位姿，与扫描时刻相差处理延迟，
+// 运动（尤其转向）时整帧点云会被多转一个角度，墙面点被甩进空地成为假障碍。
+// 由下游按扫描时刻查 TF（map->base_link 历史 200Hz）即可严格对齐。frame_id 由 LocSystem 填写。
 // 注意必须在 lio_->GetProjCloud() 之前调用：那个函数会把投影关键帧点【原地追加】到
 // scan_undistort_ 里，之后再取就不是纯净的单帧了。
 void Localization::PublishRegisteredScan() {
-    if (!pointcloud_world_callback_ || lio_ == nullptr) {
-        return;
-    }
-    const LocalizationResult tf_res = loc_result_;
-    if (!tf_res.valid_) {
+    if (!pointcloud_world_callback_ || lio_ == nullptr || !loc_result_.valid_) {
         return;
     }
     CloudPtr scan = lio_->GetScanUndist();
@@ -192,26 +197,9 @@ void Localization::PublishRegisteredScan() {
         return;
     }
 
-    PointCloudType world;
-    world.points.reserve(scan->size());
-    for (const auto& pt : scan->points) {
-        const Vec3d p = tf_res.pose_ * Vec3d(pt.x, pt.y, pt.z);
-        PointType out;
-        out.x = static_cast<float>(p.x());
-        out.y = static_cast<float>(p.y());
-        out.z = static_cast<float>(p.z());
-        out.intensity = pt.intensity;
-        out.time = pt.time;
-        world.points.emplace_back(out);
-    }
-    world.width = world.points.size();
-    world.height = 1;
-    world.is_dense = false;
-
     sensor_msgs::msg::PointCloud2 msg;
-    pcl::toROSMsg(world, msg);
-    msg.header.frame_id = "map";
-    msg.header.stamp = math::FromSec(tf_res.timestamp_);
+    pcl::toROSMsg(*scan, msg);
+    msg.header.stamp = math::FromSec(lio_->GetState().timestamp_);  // 去畸变目标时刻 = lidar_end_time
     pointcloud_world_callback_(msg);
 }
 

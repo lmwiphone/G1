@@ -105,6 +105,8 @@ class LaunchManagerNode(Node):
         params = request.parameter
 
         with self._lock:
+            # 已自行退出（崩溃/被外部杀掉）的记录要先清掉，否则会永远"already running"
+            self._processes = [(lf, p) for lf, p in self._processes if p.poll() is None]
             if any(launch_file == lf for lf, _ in self._processes):
                 response.success = False
                 response.message = f"{launch_file} is already running."
@@ -147,12 +149,31 @@ class LaunchManagerNode(Node):
 
     def _terminate_process(self, process):
         """Terminate the child process"""
+        pgid = None
+        try:
+            pgid = os.getpgid(process.pid)
+        except ProcessLookupError:
+            pass
+        # SIGINT 让 ros2 launch 正常收尾；超时后对整个进程组 SIGTERM，再超时由下方 SIGKILL 清场。
+        # 总时长有上界（约 13 s），调用方（robot_status_manager）据此设置等待时间。
         try:
             process.send_signal(signal.SIGINT)
-            process.wait(timeout=5)
+            process.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            try:
+                if pgid is not None:
+                    os.killpg(pgid, signal.SIGTERM)
+                process.wait(timeout=3)
+            except (subprocess.TimeoutExpired, ProcessLookupError, PermissionError):
+                pass
         finally:
+            # ros2 launch 退出后仍可能留下同进程组的子节点（孤儿），
+            # 会与下一次启动的同名节点冲突，统一清理整个进程组。
+            if pgid is not None:
+                try:
+                    os.killpg(pgid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
             output, error = process.communicate()
             self.get_logger().info(
                 f"Process terminated. Output: {output}, Error: {error}")

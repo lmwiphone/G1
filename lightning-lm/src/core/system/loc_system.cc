@@ -60,6 +60,8 @@ bool LocSystem::Init(const std::string &yaml_path) {
     if (options_.pub_tf_) {
         base_frame_ = node_->declare_parameter<std::string>("base_frame", "base_link");
         lidar_frame_ = node_->declare_parameter<std::string>("lidar_frame", "mid360_link");
+        body_frame_ = node_->declare_parameter<std::string>("body_frame", "body_link");
+        footprint_frame_ = node_->declare_parameter<std::string>("footprint_frame", "base_footprint");
         if (base_frame_ == lidar_frame_ || base_frame_.empty() || lidar_frame_.empty()) {
             throw std::runtime_error("base_frame and lidar_frame must be distinct, nonempty frame IDs");
         }
@@ -68,9 +70,22 @@ bool LocSystem::Init(const std::string &yaml_path) {
             "/tf_static", rclcpp::QoS(100).reliable().transient_local(),
             [this](tf2_msgs::msg::TFMessage::ConstSharedPtr msg) { CacheStaticExtrinsic(*msg); });
         tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(node_);
+        static_tf_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(node_);
         loc_->SetTFCallback(
             [this](const geometry_msgs::msg::TransformStamped &pose) { PublishBaseTF(pose); });
     }
+
+    // SLAM 建图以雷达起始位置为 map 原点，地面因此位于 z = g2p5.floor_height（约 -1.2 m），
+    // 导致 base_link 落在 map 平面下方约 1.2 m。这里把 map 的 z=0 平移到地面，
+    // 使 base_link 贴合地面、与 map_server 发布的 2D 栅格（origin.z 恒为 0）对齐。
+    // 平面 base_link 模式下 TF 不再使用该偏移（base_link 恒贴地 z=0），仅用于 /base_link_pose 与旧 6DoF 模式。
+    try {
+        map_z_offset_ = -yaml.GetValue<double>("g2p5", "floor_height");
+    } catch (const std::exception &) {
+        map_z_offset_ = 0.0;
+    }
+    loc_->SetMapZOffset(map_z_offset_);
+    LOG(INFO) << "map z offset (ground-referenced map frame): " << map_z_offset_;
 
     // 诊断话题：把配准后的点云（LIO 去畸变 + 定位位姿，与 UI 同源）发布到 map 系，
     // 便于在 RViz 里直接看 SLAM 用的是什么点云、配准结果落在哪。默认关闭。
@@ -91,9 +106,12 @@ bool LocSystem::Init(const std::string &yaml_path) {
     if (pub_scan) {
         scan_pub_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>(
             "/lightning/registered_scan", rclcpp::QoS(2));
-        loc_->SetPointcloudWorldCallback(
-            [this](const sensor_msgs::msg::PointCloud2 &cloud) { scan_pub_->publish(cloud); });
-        LOG(INFO) << "publishing registered scan on /lightning/registered_scan (frame=map)";
+        loc_->SetPointcloudWorldCallback([this](const sensor_msgs::msg::PointCloud2 &cloud) {
+            auto msg = cloud;
+            msg.header.frame_id = lidar_frame_;  // 雷达系 + 扫描时刻，下游按该时刻查 TF
+            scan_pub_->publish(msg);
+        });
+        LOG(INFO) << "publishing deskewed scan on /lightning/registered_scan (frame=" << lidar_frame_ << ")";
     }
 
     bool ret = loc_->Init(yaml_path, map_path);
@@ -112,8 +130,12 @@ void LocSystem::CacheStaticExtrinsic(const tf2_msgs::msg::TFMessage& msg) {
     }
     try {
         // No timeout, and only on static-TF reception, never in the localization callback.
+        // 优先 body_link（平面 base_link 模式）；旧 URDF 没有 body_link 时退回 base_link。
+        const bool has_body = !body_frame_.empty() && body_frame_ != base_frame_ &&
+                              static_tf_buffer_->canTransform(body_frame_, lidar_frame_, tf2::TimePointZero);
+        const std::string parent = has_body ? body_frame_ : base_frame_;
         const auto transform = static_tf_buffer_->lookupTransform(
-            base_frame_, lidar_frame_, tf2::TimePointZero);
+            parent, lidar_frame_, tf2::TimePointZero);
         const auto& t = transform.transform.translation;
         const auto& r = transform.transform.rotation;
         Quatd q(r.w, r.x, r.y, r.z);
@@ -123,9 +145,20 @@ void LocSystem::CacheStaticExtrinsic(const tf2_msgs::msg::TFMessage& msg) {
             return;
         }
         lidar_to_base_ = SE3(q.normalized(), translation).inverse();
+        planar_base_ = has_body;
         extrinsic_ready_ = true;
-        RCLCPP_INFO(node_->get_logger(), "Cached static extrinsic %s <- %s; base TF output enabled",
-                    base_frame_.c_str(), lidar_frame_.c_str());
+        if (planar_base_) {
+            // base_footprint 与平面 base_link 重合（collision_monitor 使用）
+            geometry_msgs::msg::TransformStamped fp;
+            fp.header.stamp = node_->now();
+            fp.header.frame_id = base_frame_;
+            fp.child_frame_id = footprint_frame_;
+            fp.transform.rotation.w = 1.0;
+            static_tf_broadcaster_->sendTransform(fp);
+        }
+        RCLCPP_INFO(node_->get_logger(), "Cached static extrinsic %s <- %s; %s TF output enabled",
+                    parent.c_str(), lidar_frame_.c_str(),
+                    planar_base_ ? "planar base_link + dynamic body tilt" : "6DoF base_link");
     } catch (const tf2::TransformException& error) {
         RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
                             "Waiting for static base/LiDAR extrinsic: %s", error.what());
@@ -149,18 +182,39 @@ void LocSystem::PublishBaseTF(const geometry_msgs::msg::TransformStamped& lidar_
     const Quatd q(r.w, r.x, r.y, r.z);
     const Vec3d translation(t.x, t.y, t.z);
     if (!q.coeffs().allFinite() || q.norm() < 1e-6 || !translation.allFinite()) return;
-    const SE3 map_to_base = SE3(q.normalized(), translation) * extrinsic;
+    // planar_base_ 时 extrinsic 为 T_lidar_body，否则为 T_lidar_base。
+    const SE3 map_to_parent = SE3(q.normalized(), translation) * extrinsic;
+    auto fill = [](geometry_msgs::msg::TransformStamped& msg, const SE3& T, double dz) {
+        msg.transform.translation.x = T.translation().x();
+        msg.transform.translation.y = T.translation().y();
+        msg.transform.translation.z = T.translation().z() + dz;
+        const auto r = T.unit_quaternion();
+        msg.transform.rotation.x = r.x();
+        msg.transform.rotation.y = r.y();
+        msg.transform.rotation.z = r.z();
+        msg.transform.rotation.w = r.w();
+    };
     auto output = lidar_pose;  // Preserve algorithm timestamp and map frame.
     output.child_frame_id = base_frame_;
-    output.transform.translation.x = map_to_base.translation().x();
-    output.transform.translation.y = map_to_base.translation().y();
-    output.transform.translation.z = map_to_base.translation().z();
-    const auto rotation = map_to_base.unit_quaternion();
-    output.transform.rotation.x = rotation.x();
-    output.transform.rotation.y = rotation.y();
-    output.transform.rotation.z = rotation.z();
-    output.transform.rotation.w = rotation.w();
-    tf_broadcaster_->sendTransform(output);
+    if (!planar_base_) {
+        fill(output, map_to_parent, map_z_offset_);
+        tf_broadcaster_->sendTransform(output);
+        return;
+    }
+    // 平面导航系：躯干 x 轴在地图水平面上的投影作为航向，位置取躯干原点（站立旋转中心的地面投影）。
+    const Mat3d R = map_to_parent.rotationMatrix();
+    const double yaw = std::atan2(R(1, 0), R(0, 0));
+    const SE3 map_to_base(SO3::rotZ(yaw), map_to_parent.translation());
+    const SE3 base_to_body(map_to_base.so3().inverse() * map_to_parent.so3(), Vec3d::Zero());
+    // base_link 贴地：body_link 原点按 URDF 即机器人脚下地面，因此 map 系中 z 恒为 0。
+    // 固定的 map_z_offset_ 依赖建图起点 IMU 高度，每张图不同（实测 1789713472324 偏 0.19m，
+    // 整片地面被 costmap 当成障碍），不能用于导航高度基准。
+    fill(output, map_to_base, -map_to_base.translation().z());
+    auto tilt = lidar_pose;
+    tilt.header.frame_id = base_frame_;
+    tilt.child_frame_id = body_frame_;
+    fill(tilt, base_to_body, 0.0);
+    tf_broadcaster_->sendTransform(std::vector<geometry_msgs::msg::TransformStamped>{output, tilt});
 }
 
 void LocSystem::SetInitPose(const SE3 &pose) {

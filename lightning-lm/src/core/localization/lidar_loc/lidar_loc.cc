@@ -78,6 +78,29 @@ bool LidarLoc::Init(const std::string& config_path) {
     options_.enable_icp_adjust_ = yaml.GetValue<bool>("lidar_loc", "enable_icp_adjust");
     options_.with_height_ = yaml.GetValue<bool>("loop_closing", "with_height");
     options_.try_self_extrap_ = yaml.GetValue<bool>("lidar_loc", "try_self_extrap");
+    try {
+        options_.gravity_constrain_ = yaml.GetValue<bool>("lidar_loc", "gravity_constrain");
+    } catch (const std::exception&) {
+        options_.gravity_constrain_ = false;  // 老配置无该键，保持原行为
+    }
+    LOG(INFO) << "gravity constrain: " << options_.gravity_constrain_;
+    // 地图坐标系中的重力"上"方向，来自 <map>/gravity_up.txt（三个数，地图系）。
+    // 旧地图建图时世界系=首帧 IMU 系，会随建图起点姿态倾斜，方向需实测后写入；
+    // 开启 fasterlio.gravity_align_init 建出的地图保存时自动写 "0 0 1"。
+    // 没有该文件时无法确定地图的重力方向，不做重力约束（保持原行为）。
+    {
+        std::ifstream fin(options_.map_option_.map_path_ + "/gravity_up.txt");
+        Vec3d up;
+        if (fin >> up[0] >> up[1] >> up[2] && up.norm() > 0.5) {
+            map_up_ = up.normalized();
+            map_up_known_ = true;
+            LOG(INFO) << "map gravity up: " << map_up_.transpose() << " (tilt "
+                      << std::acos(std::min(1.0, map_up_.z())) * 180.0 / M_PI << " deg)";
+        } else if (options_.gravity_constrain_) {
+            options_.gravity_constrain_ = false;
+            LOG(WARNING) << "map has no gravity_up.txt, gravity constrain disabled for this map";
+        }
+    }
 
     lidar_loc::grid_search_angle_step = yaml.GetValue<double>("lidar_loc", "grid_search_angle_step");
     lidar_loc::grid_search_angle_range = yaml.GetValue<double>("lidar_loc", "grid_search_angle_range");
@@ -295,6 +318,9 @@ bool LidarLoc::InitWithFP(CloudPtr input, const SE3& fp_pose) {
     CloudPtr output_cloud(new PointCloudType);
     // loc_inited_ = YawSearch(pose_esti, fitness_score, input, output_cloud);
     loc_inited_ = Localize(pose_esti, fitness_score, input, output_cloud);
+    if (loc_inited_ && options_.gravity_constrain_) {
+        pose_esti = ApplyGravityConstraint(pose_esti, "init");
+    }
 
     if (loc_inited_) {
         current_timestamp_ = math::ToSec(input->header.stamp);
@@ -655,6 +681,10 @@ void LidarLoc::Align(const CloudPtr& input) {
     //     current_pose_esti = guess_from_dr;
     // }
 
+    if (options_.gravity_constrain_) {
+        current_pose_esti = ApplyGravityConstraint(current_pose_esti, "track");
+    }
+
     if (options_.force_2d_) {
         PoseRPYD RPYXYZ = math::SE3ToRollPitchYaw(current_pose_esti);
         RPYXYZ.roll = 0;
@@ -887,7 +917,12 @@ bool LidarLoc::Localize(SE3& pose, double& confidence, CloudPtr input, CloudPtr 
     q_3d.normalize();
     pose = SE3(q_3d, t_3d);
 
-    LOG(INFO) << "confidence: " << confidence << ", t: " << t_3d.transpose() << ", succ: " << loc_success;
+    {
+        auto rpy = math::SE3ToRollPitchYaw(pose);  // 诊断：NDT 结果姿态（度）
+        LOG(INFO) << "confidence: " << confidence << ", t: " << t_3d.transpose() << ", succ: " << loc_success
+                  << ", rpy(deg): " << rpy.roll * 180 / M_PI << " " << rpy.pitch * 180 / M_PI << " "
+                  << rpy.yaw * 180 / M_PI;
+    }
 
     return loc_success;
 }
@@ -942,6 +977,10 @@ bool LidarLoc::AssignLOPose(double timestamp) {
         current_lo_pose_set_ = true;
 
         current_vel_b_ = best_match.GetRot().inverse() * best_match.GetVel();
+        if (best_match.grav_.norm() > 1e-3) {
+            current_up_body_ = -(best_match.GetRot().inverse() * best_match.grav_).normalized();
+            current_up_body_set_ = true;
+        }
         current_vel_ = best_match.GetVel();
 
         // if (options_.with_height_) {
@@ -953,6 +992,32 @@ bool LidarLoc::AssignLOPose(double timestamp) {
         current_lo_pose_set_ = false;
         return false;
     }
+}
+
+SE3 LidarLoc::ApplyGravityConstraint(const SE3& pose, const char* tag) const {
+    if (!current_up_body_set_) {
+        LOG(WARNING) << "gravity constrain(" << tag << "): LIO gravity not ready, skip";
+        return pose;
+    }
+    const Vec3d up_map = pose.so3() * current_up_body_;  // 按当前估计，重力上方向在 map 系中的指向
+    const Vec3d axis = up_map.cross(map_up_);           // 目标：地图自身的重力上方向
+    const double s = axis.norm();
+    const double angle = std::atan2(s, up_map.dot(map_up_));
+    if (s < 1e-9) {
+        return pose;
+    }
+    if (angle * 180.0 / M_PI > options_.gravity_constrain_max_deg_) {
+        LOG(WARNING) << "gravity constrain(" << tag << "): tilt error " << angle * 180.0 / M_PI
+                     << " deg too large, skip";
+        return pose;
+    }
+    // 绕水平轴的最小旋转：一阶上不改变航向，平移（雷达位置）保持不变
+    const SE3 out(SO3::exp(axis / s * angle) * pose.so3(), pose.translation());
+    const auto rpy = math::SE3ToRollPitchYaw(out);
+    LOG(INFO) << "gravity constrain(" << tag << "): corrected " << angle * 180.0 / M_PI
+              << " deg, rpy(deg): " << rpy.roll * 180 / M_PI << " " << rpy.pitch * 180 / M_PI << " "
+              << rpy.yaw * 180 / M_PI;
+    return out;
 }
 
 bool LidarLoc::AssignDRPose(double timestamp) {

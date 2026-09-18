@@ -44,6 +44,10 @@ class LidarLoc {
         bool init_with_fp_ = true;                     // 是否使用功能点进行初始化
         bool enable_parking_static_ = false;           // 是否在静止时输出固定位置
         bool enable_icp_adjust_ = false;               // 是否使用icp调整ndt匹配结果提高定位精度
+        // 用 LIO 估计的重力方向约束定位结果的 roll/pitch，只保留 NDT 的航向与平移。
+        // 前提：地图 z 轴与重力对齐（可用地图地面/墙面法向核验）。
+        bool gravity_constrain_ = false;
+        double gravity_constrain_max_deg_ = 15.0;      // 单次修正超过该角度视为异常，不修正
 
         /// 点云过滤
         // float filter_z_min_ = -1.0;
@@ -150,6 +154,12 @@ class LidarLoc {
     bool AssignLOPose(double timestamp);
 
     /**
+     * 重力约束：以最小旋转把"雷达系重力上方向"在 map 系中的指向转到 +z，
+     * 航向与平移保持不变。仅在 gravity_constrain_ 开启且已拿到 LIO 重力时生效。
+     */
+    SE3 ApplyGravityConstraint(const SE3& pose, const char* tag) const;
+
+    /**
      * 寻找当前帧对应的DR相对位姿
      * @param timestamp
      * @return
@@ -209,6 +219,10 @@ class LidarLoc {
     bool current_lo_pose_set_ = false;
     SE3 last_lo_pose_;     // 上一次相对位置，相对位置来自LO
     SE3 current_lo_pose_;  // 本次的LO相对位置
+    bool current_up_body_set_ = false;
+    Vec3d current_up_body_ = Vec3d::UnitZ();  // 本次对应的重力"上"方向（雷达/body 系，来自 LIO 状态）
+    Vec3d map_up_ = Vec3d::UnitZ();  // 地图坐标系中的重力"上"方向，见 <map>/gravity_up.txt
+    bool map_up_known_ = false;      // 地图提供了 gravity_up.txt 才启用重力约束
 
     bool last_dr_pose_set_ = false;
     bool current_dr_pose_set_ = false;

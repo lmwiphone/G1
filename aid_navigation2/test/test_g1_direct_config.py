@@ -110,7 +110,7 @@ class G1ProfileTests(unittest.TestCase):
         self.assertGreater(bridge['duration'], 0.0)
         self.assertEqual(s['max_velocity'], [0.5, 0.0, 0.9])
         self.assertEqual(s['min_velocity'], [0.0, 0.0, -0.9])
-        self.assertEqual(s['deadband_velocity'], [0.3, 0.0, 0.8])
+        self.assertEqual(s['deadband_velocity'], [0.0, 0.0, 0.0])
 
     def test_reject_missing_or_invalid_geometry(self):
         with self.assertRaises(ValueError):

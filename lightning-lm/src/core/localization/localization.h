@@ -1,5 +1,6 @@
 #pragma once
 
+#include <mutex>
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "std_msgs/msg/int32.hpp"
 
@@ -87,8 +88,13 @@ class Localization {
     /// 纯旁路输出，不回写任何算法状态。
     void SetPointcloudWorldCallback(PointcloudWorldCallback&& callback);
 
-    /// 每帧把 LIO 去畸变扫描按 TF 位姿摆到 map 系并经回调发出（诊断用）
+    /// 每帧经回调发出 LIO 去畸变扫描（雷达系，时间戳 = 该帧 lidar_end_time）
     void PublishRegisteredScan();
+
+    /// map 帧竖直偏移：SLAM 建图以雷达起始位置为原点，地面因此位于 z=floor_height；
+    /// 设置 -floor_height 可把 map 的 z=0 平移到地面，使 base_link 落在地面上。
+    void SetMapZOffset(double dz) { map_z_offset_ = dz; }
+
 
     // void SetPathCallback(std::function<void(const nav_msgs::msg::Path& path)>&& callback);
     // void SetPointcloudBodyCallback(std::function<void(const sensor_msgs::msg::PointCloud2& pointcloud)>&& callback);
@@ -128,6 +134,8 @@ class Localization {
     LocStateCallback loc_state_callback_;
     PointcloudBodyCallback pointcloud_body_callback_;
     PointcloudWorldCallback pointcloud_world_callback_;
+
+    double map_z_offset_ = 0.0;  // map 帧竖直偏移，见 SetMapZOffset
 
     /// 输入检查
     double last_imu_time_ = 0;

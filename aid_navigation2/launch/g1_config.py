@@ -149,7 +149,8 @@ def make_configs(stock, collision, *, floor_z, base_floor_z, cloud_topic,
     smooth.update(feedback='OPEN_LOOP', enable_stamped_cmd_vel=False,
                   max_velocity=[0.5, 0.0, 0.9], min_velocity=[0.0, 0.0, -0.9],
                   max_accel=[0.35, 0.35, 0.60], max_decel=[-0.35, -0.35, -0.60],
-                  deadband_velocity=[0.3, 0.0, 0.8],
+                  # 最小有效速度由 cmdvel_to_sport 按方向提升；此处置零会让 MPPI 的低速输出全变 0。
+                  deadband_velocity=[0.0, 0.0, 0.0],
                   velocity_timeout=0.20)
     smooth.pop('odom_topic', None)
     smooth.pop('odom_duration', None)

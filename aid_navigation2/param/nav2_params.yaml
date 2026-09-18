@@ -287,8 +287,8 @@ velocity_smoother:
     max_accel: [0.35, 0.35, 0.60]
     max_decel: [-0.35, -0.35, -0.60]
     enable_stamped_cmd_vel: false
-    # 本体无法执行的非零低速区间直接置零。
-    deadband_velocity: [0.3, 0.0, 0.8]
+    # 不置零：G1 最小有效速度由 g1_cmdvel_to_sport 按方向提升（min_vx/min_wz）。
+    deadband_velocity: [0.0, 0.0, 0.0]
     velocity_timeout: 0.20
 
 local_costmap:

@@ -86,6 +86,7 @@ class SlamSystem {
 
     std::string map_name_;  // 地图名
     std::string map_save_root_;
+    bool gravity_aligned_map_ = false;  // LIO 世界系已对齐重力（fasterlio.gravity_align_init）
 
     std::shared_ptr<LaserMapping> lio_ = nullptr;       // lio 前端
     std::shared_ptr<LoopClosing> lc_ = nullptr;         // 回环检测

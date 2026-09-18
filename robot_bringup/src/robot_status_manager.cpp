@@ -71,6 +71,13 @@ class StatusManagerNode : public rclcpp::Node {
   // false: 顶层 robot.launch.py 已经拥有这些进程，本节点只上报状态。
   bool manage_stack_ = true;
   bool navigation_started_ = false;
+  // 由顶层 robot.launch.py 透传给各子 launch 的附加参数（"k:=v k2:=v2"），
+  // 保证经本节点拉起的定位/导航/建图与直接由顶层启动时配置一致。
+  std::string localization_args_;
+  std::string navigation_args_;
+  std::string mapping_args_;
+  // 地图数据库没有可用的当前地图时，定位使用的兜底地图目录。
+  std::string default_map_dir_;
 
   rclcpp::executors::SingleThreadedExecutor::SharedPtr callback_group_executor_;
   rclcpp::CallbackGroup::SharedPtr callback_group_;
@@ -213,6 +220,29 @@ class StatusManagerNode : public rclcpp::Node {
     return true;
   }
 
+  static std::string JoinArgs(const std::string &a, const std::string &b) {
+    if (a.empty()) return b;
+    if (b.empty()) return a;
+    return a + " " + b;
+  }
+
+  // 定位地图：优先用地图数据库的当前地图（与前端一致），否则用 default_map_dir。
+  bool SelectLocalizationMap(std::string &directory) {
+    if (GetCurrentMap(directory) && IsLightningMapComplete(directory)) {
+      return true;
+    }
+    if (!default_map_dir_.empty()) {
+      const std::string fallback = ResolveLightningMapDirectory(default_map_dir_);
+      if (!fallback.empty()) {
+        RCLCPP_WARN(get_logger(), "No usable current map in database, falling back to %s",
+                    fallback.c_str());
+        directory = fallback;
+        return true;
+      }
+    }
+    return false;
+  }
+
   bool IsLightningMapComplete(const std::string &directory) const {
     const std::filesystem::path path(directory);
     return std::filesystem::exists(path / "index.txt") &&
@@ -344,6 +374,20 @@ class StatusManagerNode : public rclcpp::Node {
     return result.get()->success;
   }
 
+  // Nav2 由 launch_manager 刚拉起时 lifecycle 仍在 configure/activate（autostart，Thor 上约 5~15 s，
+  // 且 costmap 要等到定位发出 map->base_link 才能激活）。此时立即 RESUME 会失败，
+  // 前端（遥控后进导航、定位复位后立刻导航）就会报"状态切换失败"。
+  bool WaitNavigationActive(std::chrono::seconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (rclcpp::ok() && std::chrono::steady_clock::now() < deadline) {
+      if (IsNavigationActive()) {
+        return true;
+      }
+      rclcpp::sleep_for(std::chrono::seconds(1));
+    }
+    return false;
+  }
+
   bool StartNavigation(const std::string& map_directory) {
     const std::filesystem::path map_yaml =
         std::filesystem::path(map_directory) / "map.yaml";
@@ -357,7 +401,8 @@ class StatusManagerNode : public rclcpp::Node {
     }
     navigation_started_ = StartLaunch(
         navigation_launch_file,
-        "map:=" + map_yaml.string() + " floor_z:=0.0 base_floor_z:=0.0");
+        JoinArgs("map:=" + map_yaml.string() + " floor_z:=0.0 base_floor_z:=0.0",
+                 navigation_args_));
     return navigation_started_;
   }
 
@@ -373,7 +418,8 @@ class StatusManagerNode : public rclcpp::Node {
   }
 
   bool StartLocalizationAndNavigation(const std::string& map_directory) {
-    if (!StartLaunch(localization_launch_file, "map_dir:=" + map_directory)) {
+    if (!StartLaunch(localization_launch_file,
+                     JoinArgs("map_dir:=" + map_directory, localization_args_))) {
       return false;
     }
     if (StartNavigation(map_directory)) {
@@ -462,7 +508,7 @@ class StatusManagerNode : public rclcpp::Node {
         return false;
       }
 
-      run_status = StartLaunch(maping_launch_file);
+      run_status = StartLaunch(maping_launch_file, mapping_args_);
       if (run_status == true) {
         slam_status_ = set_status_;
       }
@@ -480,7 +526,7 @@ class StatusManagerNode : public rclcpp::Node {
         return false;
       }
 
-      if (!GetCurrentMap(map_filename_) || !IsLightningMapComplete(map_filename_)) {
+      if (!SelectLocalizationMap(map_filename_)) {
         RCLCPP_ERROR(get_logger(),
                      "No complete Lightning map is selected; mapping must be saved first");
         return false;
@@ -496,8 +542,10 @@ class StatusManagerNode : public rclcpp::Node {
         if (!navigation_started_ && !StartNavigation(map_filename_)) {
           return false;
         }
-        if (!IsNavigationActive() && !ResumeNavigation()) {
-          RCLCPP_ERROR(get_logger(), "Failed to resume Nav2");
+        // 先等 autostart 完成；超时仍未激活才尝试 RESUME（兜底被暂停的情况）。
+        if (!WaitNavigationActive(std::chrono::seconds(60)) &&
+            !(ResumeNavigation() && IsNavigationActive())) {
+          RCLCPP_ERROR(get_logger(), "Nav2 is not active (check localization TF map->base_link)");
           return false;
         }
         run_status = ChangeMap(map_filename_+"/map.yaml");
@@ -515,8 +563,11 @@ class StatusManagerNode : public rclcpp::Node {
       if (!StopNavigation()) {
         return false;
       }
-      if (slam_status_ == "mapping" && !StopLaunch(maping_launch_file)) {
-        return false;
+      if (slam_status_ == "mapping") {
+        if (!StopLaunch(maping_launch_file)) {
+          return false;
+        }
+        slam_status_ = "idle";  // 退出建图（未保存）后不再处于建图状态
       }
       control_model_ = set_status_;
       run_status = true;
@@ -552,6 +603,10 @@ class StatusManagerNode : public rclcpp::Node {
     manage_stack_ = declare_parameter<bool>("manage_stack", true);
     const std::string startup_mode =
         declare_parameter<std::string>("startup_mode", "base");
+    localization_args_ = declare_parameter<std::string>("localization_launch_args", "");
+    navigation_args_ = declare_parameter<std::string>("navigation_launch_args", "");
+    mapping_args_ = declare_parameter<std::string>("mapping_launch_args", "");
+    default_map_dir_ = declare_parameter<std::string>("default_map_dir", "");
     // launch_ros 通过全局 __node 重映射主节点名称。若辅助节点也读取全局
     // 参数，它会被重映射成与主节点相同的名称，并触发重复 rosout publisher。
     // 辅助节点只用于同步 service client，必须保留独立且稳定的节点名。
@@ -633,12 +688,18 @@ class StatusManagerNode : public rclcpp::Node {
           "SLAM/Nav2 process ownership belongs to robot.launch.py; "
           "automatic nested launch is disabled (startup_mode=%s)",
           startup_mode.c_str());
-    } else {
-      const bool have_lightning_map =
-          GetCurrentMap(map_filename_) && IsLightningMapComplete(map_filename_);
-      if (have_lightning_map) {
-        const bool run_status = StartLocalizationAndNavigation(map_filename_);
-        if (run_status) {
+    } else if (startup_mode == "mapping") {
+      // 本节点拥有进程：前端可随时经 mode_set 在建图/定位间切换。
+      if (StartLaunch(maping_launch_file, mapping_args_)) {
+        slam_status_ = "mapping";
+      } else {
+        RCLCPP_ERROR(get_logger(), "Failed to start Lightning mapping");
+      }
+    } else if (startup_mode == "localization" || startup_mode == "navigation") {
+      if (SelectLocalizationMap(map_filename_)) {
+        RCLCPP_INFO(get_logger(), "Starting localization and navigation on %s",
+                    map_filename_.c_str());
+        if (StartLocalizationAndNavigation(map_filename_)) {
           slam_status_ = "localization";
         } else {
           RCLCPP_ERROR(
@@ -652,6 +713,9 @@ class StatusManagerNode : public rclcpp::Node {
             "No complete Lightning map is selected; starting idle for first mapping");
         map_filename_ = map_filepath_ + "/default";
       }
+    } else {
+      RCLCPP_INFO(get_logger(), "startup_mode=%s: SLAM/Nav2 stay idle until mode_set",
+                  startup_mode.c_str());
     }
 
     RCLCPP_INFO(this->get_logger(), "robot_status init success");
@@ -702,9 +766,11 @@ class StatusManagerNode : public rclcpp::Node {
     }
 
     auto result = stop_launch_client_->async_send_request(request);
-    // Wait for the result.
+    // launch_manager 要等被停的 launch 真正退出才回复（Nav2/Lightning 正常退出常需 5~13 s，
+    // 其停止流程上限约 13 s）。原先 5 s 超时会让模式切换半途失败：本节点判定失败并中止，
+    // 而进程其实仍在被停，状态从此与实际不一致，前端要反复点几次才能进入建图。
     if (rclcpp::spin_until_future_complete(node_, result,
-                                           std::chrono::seconds(5)) ==
+                                           std::chrono::seconds(45)) ==
         rclcpp::FutureReturnCode::SUCCESS) {
       RCLCPP_INFO_STREAM(rclcpp::get_logger("stop_launch_client"),
                          "message:" << result.get()->message);

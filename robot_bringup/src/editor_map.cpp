@@ -57,12 +57,21 @@ class MapEditorNode : public rclcpp::Node {
     if (!GetMapFilePath(map_id, map_dir_)) {
       return false;
     }
+    // get_map_image 返回完整的 ".../map.yaml"，这里统一成不带扩展名的前缀
+    const std::string yaml_ext = ".yaml";
+    if (map_dir_.size() > yaml_ext.size() &&
+        map_dir_.compare(map_dir_.size() - yaml_ext.size(), yaml_ext.size(), yaml_ext) == 0) {
+      map_dir_.erase(map_dir_.size() - yaml_ext.size());
+    }
     auto map_yaml = map_dir_ + ".yaml";
     auto back_map_yaml = map_dir_ + "_back.yaml";
-    auto map_param = nav2_map_server::loadMapYaml(map_yaml);
-    // map_param.free_thresh = 0;
-    // map_param.occupied_thresh = 1;
-    nav2_map_server::loadMapFromFile(map_param, current_map_);
+    try {
+      auto map_param = nav2_map_server::loadMapYaml(map_yaml);
+      nav2_map_server::loadMapFromFile(map_param, current_map_);
+    } catch (const std::exception& e) {
+      RCLCPP_ERROR(get_logger(), "load map %s failed: %s", map_yaml.c_str(), e.what());
+      return false;
+    }
     if (fileExists(back_map_yaml) == false) {
       saveMap(map_dir_ + "_back");
     }

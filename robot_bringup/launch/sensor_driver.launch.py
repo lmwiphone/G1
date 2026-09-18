@@ -67,6 +67,14 @@ def generate_launch_description():
                 'enable_color': LaunchConfiguration('realsense_enable_color'),
                 'pointcloud.enable': 'true',
                 'pointcloud.allow_no_texture_points': 'true',
+                # 848x480 全分辨率点云约 34 万点/帧（~7MB，9Hz），best-effort 订阅大量丢帧、
+                # STVL 体素滤波吃满 CPU，实测 2~3m 障碍几乎标不上。深度先 4 倍降采样
+                # （212x120，约 2.5 万点），3m 处点距约 2cm，足够 5cm 体素。
+                'decimation_filter.enable': 'true',
+                'decimation_filter.filter_magnitude': '4',
+                # 实测深度 >4m 的点 100% 落在地面以下 2.6~3.4m（地面反光导致深度偏大，
+                # 视野上沿约 3.9m 就已打到地面），3~4m 也有 15%。只保留 3m 内，远处交给雷达。
+                'clip_distance': '3.0',
                 'align_depth.enable': 'false',
                 'enable_gyro': 'false',
                 'enable_accel': 'false',

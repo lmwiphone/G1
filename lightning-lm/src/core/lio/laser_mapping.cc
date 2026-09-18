@@ -82,6 +82,10 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
 
         bool use_imu_filter = yaml["fasterlio"]["imu_filter"].as<bool>();
         p_imu_->SetUseIMUFilter(use_imu_filter);
+        // 可选键，老配置没有时保持原行为（世界系=首帧 IMU 系）
+        if (yaml["fasterlio"]["gravity_align_init"]) {
+            p_imu_->SetGravityAlignInit(yaml["fasterlio"]["gravity_align_init"].as<bool>());
+        }
         options_.proj_kfs_ = yaml["fasterlio"]["proj_kfs"].as<bool>();
 
     } catch (...) {
