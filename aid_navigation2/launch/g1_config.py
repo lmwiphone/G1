@@ -84,15 +84,20 @@ def make_configs(stock, collision, *, floor_z, base_floor_z, cloud_topic,
                     'transport_type': 'raw',
                     'marking': True,
                     'clearing': False,
-                    'obstacle_range': 3.0,
-                    'min_obstacle_height': floor_z + 0.05,
+                    # 相机只负责雷达近处盲区。实测深度图顶部几行（掠射远地面，3D 距离 >2 m）
+                    # 双目误匹配多，地面点被沿视线抬到 0.2~0.6 m、逐帧闪烁，STVL 衰减期内
+                    # 累积成满屏假障碍；2 m 以外由雷达负责。
+                    'obstacle_range': 2.0,
+                    # 地面残差（约 1° 倾角 + 深度噪声）在 0.05~0.15 m 带最密；
+                    # 更矮的障碍由雷达（min 0.10）在 1 m 外补上。
+                    'min_obstacle_height': floor_z + 0.15,
                     'max_obstacle_height': floor_z + 1.8,
                     'expected_update_rate': 0.0,
                     'observation_persistence': 0.0,
                     'inf_is_valid': False,
                     'filter': 'voxel',
-                    # 至少两个点落入 5 cm 体素才标记，过滤单点飞点。
-                    'voxel_min_points': 2,
+                    # 至少 4 个点落入 5 cm 体素才标记，过滤零散飞点（2 m 内实物表面每体素远多于 4 点）。
+                    'voxel_min_points': 4,
                     'clear_after_reading': True,
                 },
                 'realsense_clear': {

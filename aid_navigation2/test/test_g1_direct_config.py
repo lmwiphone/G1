@@ -66,7 +66,7 @@ class G1ProfileTests(unittest.TestCase):
         self.assertEqual(stvl['realsense_mark']['topic'],
                          '/camera/camera/depth/color/points')
         self.assertEqual(stvl['realsense_mark']['filter'], 'voxel')
-        self.assertEqual(stvl['realsense_mark']['voxel_min_points'], 2)
+        self.assertEqual(stvl['realsense_mark']['voxel_min_points'], 4)
         self.assertNotIn('sensor_frame', stvl['realsense_mark'])
         self.assertAlmostEqual(stvl['realsense_clear']['min_obstacle_height'], -1.15)
         self.assertAlmostEqual(stvl['realsense_clear']['max_obstacle_height'], 0.6)

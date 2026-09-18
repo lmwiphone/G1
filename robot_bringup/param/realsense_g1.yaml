@@ -15,3 +15,7 @@ pointcloud.stream_filter: 0
 pointcloud.allow_no_texture_points: true
 # ordered_pc=true 会按 depth 分辨率输出全部像素（含无效点），带宽显著变大，STVL 不需要。
 pointcloud.ordered_pc: false
+
+# 3 = High Accuracy：提高双目匹配置信度门限，宁可留空洞也不输出误匹配点。
+# 默认预设下掠射远地面的误匹配点会被抬高成假障碍（STVL 在局部 costmap 满屏标记）。
+depth_module.visual_preset: 3
