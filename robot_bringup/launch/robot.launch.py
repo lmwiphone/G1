@@ -177,8 +177,11 @@ def generate_launch_description():
             Node(package='aid_robot_py', executable='map_transform_node',
                  name='map_transform_node', prefix=['taskset -c 3-7'], output='screen',
                  parameters=[{'use_sim_time': use_sim_time}]),
+            # launch_manager 拉起的建图/定位/导航/RViz 都继承它的 CPU 亲和性。限制在 3-7 时
+            # 建图进程（~2.7 核）与 RViz、Nav2 挤 5 核，接收线程被饿住，IMU 队列溢出丢数据，
+            # 快转后地图出现多层墙；因此给它 3-13。
             Node(package='aid_robot_py', executable='launch_manager_node',
-                 name='launch_manager_node', prefix=['taskset -c 3-7'], output='screen',
+                 name='launch_manager_node', prefix=['taskset -c 3-13'], output='screen',
                  parameters=[{'use_sim_time': use_sim_time}]),
             # 禁行区地图节点只在 use_keepout:=true（默认）时启动：前端画禁行线走
             # /aid_draw_forbidden_line，由它生成 /keepout_filter_map 给 Nav2 keepout 层。
