@@ -5,6 +5,8 @@
 #ifndef LIGHTNING_LOOP_CLOSING_H
 #define LIGHTNING_LOOP_CLOSING_H
 
+#include <vector>
+
 #include "common/keyframe.h"
 #include "common/loop_candidate.h"
 #include "utils/async_message_process.h"
@@ -42,6 +44,12 @@ class LoopClosing {
 
         bool with_height_ = true;
         double height_noise_ = 0.1;
+
+        /// 回环 NDT 由粗到细的分辨率；源点云用候选帧前后若干关键帧拼的子图（0 = 只用单帧）
+        std::vector<double> ndt_resolutions_{10.0, 5.0, 2.0, 1.0};
+        int src_submap_range_ = 0;
+        /// 只采用 NDT 的 x/y/航向修正：roll/pitch 已由 IMU 重力约束，稀疏单帧的 NDT 在这些方向上常给出 5~7° 假修正
+        bool loop_4dof_ = false;
     };
 
     LoopClosing(Options options = Options()) { options_ = options; }

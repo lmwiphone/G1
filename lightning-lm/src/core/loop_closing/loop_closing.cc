@@ -9,6 +9,7 @@
 
 #include <pcl/common/transforms.h>
 #include <pcl/registration/ndt.h>
+#include <yaml-cpp/yaml.h>
 
 #include "core/opti_algo/algo_select.h"
 #include "core/robust_kernel/cauchy.h"
@@ -51,6 +52,18 @@ void LoopClosing::Init(const std::string yaml_path) {
         options_.max_range_ = yaml.GetValue<double>("loop_closing", "max_range");
         options_.ndt_score_th_ = yaml.GetValue<double>("loop_closing", "ndt_score_th");
         options_.with_height_ = yaml.GetValue<bool>("loop_closing", "with_height");
+
+        // 可选项，缺省保持原行为
+        const YAML::Node lc = YAML::LoadFile(yaml_path)["loop_closing"];
+        if (lc["ndt_resolutions"]) {
+            options_.ndt_resolutions_ = lc["ndt_resolutions"].as<std::vector<double>>();
+        }
+        if (lc["src_submap_range"]) {
+            options_.src_submap_range_ = lc["src_submap_range"].as<int>();
+        }
+        if (lc["loop_4dof"]) {
+            options_.loop_4dof_ = lc["loop_4dof"].as<bool>();
+        }
     }
 
     if (options_.online_mode_) {
@@ -170,9 +183,9 @@ void LoopClosing::ComputeForCandidate(lightning::LoopCandidate& c) {
     const int submap_idx_range = 40;
     auto kf1 = all_keyframes_.at(c.idx1_), kf2 = all_keyframes_.at(c.idx2_);
 
-    auto build_submap = [this](int given_id, bool build_in_world) -> CloudPtr {
+    auto build_submap = [this](int given_id, bool build_in_world, int range) -> CloudPtr {
         CloudPtr submap(new PointCloudType);
-        for (int idx = -submap_idx_range; idx < submap_idx_range; idx += 4) {
+        for (int idx = -range; idx < range; idx += 4) {
             int id = idx + given_id;
             if (id < 0 || id >= all_keyframes_.size()) {
                 continue;
@@ -202,9 +215,12 @@ void LoopClosing::ComputeForCandidate(lightning::LoopCandidate& c) {
         return submap;
     };
 
-    auto submap_kf1 = build_submap(kf1->GetID(), true);
+    auto submap_kf1 = build_submap(kf1->GetID(), true, submap_idx_range);
 
-    CloudPtr submap_kf2 = kf2->GetCloud();
+    // 单帧 Livox 点云稀疏，NDT 容易停在初值附近而漏掉 0.3~0.5 m 的漂移；可改用局部子图作源点云
+    CloudPtr submap_kf2 = options_.src_submap_range_ > 0
+                              ? build_submap(kf2->GetID(), false, options_.src_submap_range_)
+                              : kf2->GetCloud();
 
     if (submap_kf1->empty() || submap_kf2->empty()) {
         c.ndt_score_ = 0;
@@ -212,10 +228,11 @@ void LoopClosing::ComputeForCandidate(lightning::LoopCandidate& c) {
     }
 
     Mat4f Tw2 = kf2->GetOptPose().matrix().cast<float>();
+    const Mat4f Tw2_init = Tw2;
 
     /// 不同分辨率下的匹配
     CloudPtr output(new PointCloudType);
-    std::vector<double> res{10.0, 5.0, 2.0, 1.0};
+    const std::vector<double>& res = options_.ndt_resolutions_;
 
     CloudPtr rough_map1, rough_map2;
 
@@ -237,12 +254,31 @@ void LoopClosing::ComputeForCandidate(lightning::LoopCandidate& c) {
         c.ndt_score_ = ndt.getTransformationProbability();
     }
 
+    if (options_.loop_4dof_) {
+        // 世界系下的修正只保留绕 z 的旋转和水平平移，roll/pitch/高度沿用初值
+        const Mat4f D = Tw2 * Tw2_init.inverse();
+        Mat4f Dz = Mat4f::Identity();
+        Dz.block<3, 3>(0, 0) =
+            Eigen::AngleAxisf(std::atan2(D(1, 0), D(0, 0)), Eigen::Vector3f::UnitZ()).toRotationMatrix();
+        const Eigen::Vector3f p_rot = Dz.block<3, 3>(0, 0) * Tw2_init.block<3, 1>(0, 3);
+        Dz(0, 3) = Tw2(0, 3) - p_rot.x();
+        Dz(1, 3) = Tw2(1, 3) - p_rot.y();
+        Tw2 = Dz * Tw2_init;
+    }
+
     Mat4d T = Tw2.cast<double>();
     Quatd q(T.block<3, 3>(0, 0));
     q.normalize();
     Vec3d t = T.block<3, 1>(0, 3);
 
     c.Tij_ = kf1->GetOptPose().inverse() * SE3(q, t);
+
+    if (options_.verbose_) {
+        const Mat4f d = Tw2_init.inverse() * Tw2;
+        LOG(INFO) << "lc cand " << c.idx1_ << "-" << c.idx2_ << " score " << c.ndt_score_ << " corr "
+                  << d.block<3, 1>(0, 3).norm() << " m "
+                  << Eigen::AngleAxisf(d.block<3, 3>(0, 0)).angle() * 180.0 / M_PI << " deg";
+    }
 
     // pcl::io::savePCDFileBinaryCompressed(
     //     "./data/lc_" + std::to_string(c.idx1_) + "_" + std::to_string(c.idx2_) + "_out.pcd", *output);
