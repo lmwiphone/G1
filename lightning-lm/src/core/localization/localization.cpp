@@ -214,22 +214,32 @@ void Localization::LidarOdomProcCloud(CloudPtr cloud) {
         return;
     }
 
-    auto lo_state = lio_->GetState();
+    // Run() 每次只处理缓冲最前面一帧；IMU 晚到时 SyncPackages 失败，点云留在缓冲里，
+    // 之后每来一帧仍只跑一次，积压永远消不掉（2026-09-19 实测启动 3 次同步失败 → 整个运行期 LIO 恒滞后 ~0.35 s）。
+    // 这里把已就绪的积压帧补跑完：每帧都喂 LO 队列并发布扫描，激光定位只用最新一帧。
+    while (true) {
+        auto lo_state = lio_->GetState();
 
-    lidar_loc_->ProcessLO(lo_state);
-    pgo_->ProcessLidarOdom(lo_state);
+        lidar_loc_->ProcessLO(lo_state);
+        pgo_->ProcessLidarOdom(lo_state);
 
-    // LOG(INFO) << "LO pose: " << std::setprecision(12) << lo_state.timestamp_ << " "
-    //           << lo_state.GetPose().translation().transpose();
+        // LOG(INFO) << "LO pose: " << std::setprecision(12) << lo_state.timestamp_ << " "
+        //           << lo_state.GetPose().translation().transpose();
 
-    // 每帧发布（10Hz）。必须在 GetProjCloud() 之前，否则拿到的点云已被投影关键帧污染。
-    PublishRegisteredScan();
+        // 每帧发布（10Hz）。必须在 GetProjCloud() 之前，否则拿到的点云已被投影关键帧污染。
+        PublishRegisteredScan();
+
+        if (!lio_->HasPendingScan() || !lio_->Run()) {
+            break;
+        }
+    }
 
     /// 获得lio的关键帧
 
     auto scan = lio_->GetProjCloud();
 
-    if (options_.loc_on_kf_) {
+    // 快速收敛阶段（初始化后到残差达标前）每帧都做激光定位，不等关键帧（静止时关键帧 2 s 才一个）
+    if (options_.loc_on_kf_ && lidar_loc_->Converged()) {
         auto kf = lio_->GetKeyframe();
         if (kf == lio_kf_) {
             /// 关键帧未更新，那就只更新IMU状态

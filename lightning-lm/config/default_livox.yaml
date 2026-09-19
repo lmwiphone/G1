@@ -69,11 +69,13 @@ system:
   with_g2p5: true # 是否需要栅格地图
   step_on_kf: false # 是否在关键帧处暂停
 
-  enable_lidar_loc_skip: false
+  # 激光定位频率：配合 lidar_loc.loc_on_kf: false，每 2 帧 LIO 做一次 NDT（~5 Hz，单次 ~35-45 ms/4 线程）。
+  # 注意 AsyncMessageProcess 的 skip_num=2 才是"走一帧跳一帧"（=1 不跳帧）。
+  enable_lidar_loc_skip: true
   enable_lidar_loc_rviz: false
   enable_lidar_odom_skip: false
   evaluation: false
-  lidar_loc_skip_num: 4
+  lidar_loc_skip_num: 2
   lidar_odom_skip_num: 2
   map_path: ~/maps/new_map/
   map_save_root: ~/maps
@@ -112,8 +114,21 @@ lidar_loc:
   update_err_v: 0.2
   update_kf_dis: 2.0
   update_lidar_loc_score: 2.5
-  loc_on_kf: true
+  # 2026-09-19：true 时只在 LIO 关键帧做激光定位，静止时关键帧 2 s 一个，而每次只修正残差的 10%
+  # （balance_factor），实测启动航向误差收敛 τ≈19 s（10°→1° 约 43 s）。改为 false 后约 5 Hz，τ≈2 s。
+  loc_on_kf: false
   try_self_extrap: false
+  # NDT 结果与 LO 预测的融合比例（旧代码硬编码 0.1），需新版 lidar_loc.cc 才生效，旧二进制忽略这些键。
+  balance_factor: 0.1
+  # 初始化后的快速收敛：NDT 分值 >= fast_converge_min_score 时按 fast_converge_factor 融合，
+  # 连续 fast_converge_ok_frames 次残差 < fast_converge_ang_deg 且 < fast_converge_pos 后恢复 balance_factor。
+  # 本图正确匹配分值 1.65~1.87（2026-09-19 09:19 日志），低于门限的匹配保持旧的 10% 慢融合。
+  fast_converge_factor: 0.5
+  fast_converge_min_score: 1.5
+  fast_converge_ang_deg: 0.5
+  fast_converge_pos: 0.05
+  fast_converge_ok_frames: 3
+  fast_converge_max_frames: 50
 maps:
   delete_when_unload: false
   dyn_cloud_policy: persistent

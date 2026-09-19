@@ -3,6 +3,7 @@
 
 #include <pcl/filters/voxel_grid.h>
 #include <condition_variable>
+#include <mutex>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <thread>
 
@@ -91,6 +92,8 @@ class LaserMapping {
 
     /// 获取IMU状态
     NavState GetIMUState() const {
+        // kf_imu_ 由 IMU 回调线程递推、由 LIO 线程在 Run() 中整体覆盖（定位在线模式两者不同线程）
+        std::lock_guard<std::mutex> lock(mtx_buffer_);
         if (p_imu_->IsIMUInited()) {
             return kf_imu_.GetX();
         } else {
@@ -98,6 +101,12 @@ class LaserMapping {
             s.pose_is_ok_ = false;
             return s;
         }
+    }
+
+    /// 缓冲里是否还有未处理的点云（IMU 晚到导致 SyncPackages 失败时会积压）
+    bool HasPendingScan() const {
+        std::lock_guard<std::mutex> lock(mtx_buffer_);
+        return !lidar_buffer_.empty();
     }
 
     CloudPtr GetScanUndist() const { return scan_undistort_; }
@@ -182,7 +191,7 @@ class LaserMapping {
     /// 点到点相关
     std::vector<char> point_selected_icp_;  // 点到点的selected points
 
-    std::mutex mtx_buffer_;
+    mutable std::mutex mtx_buffer_;  // 保护 imu_buffer_/lidar_buffer_/kf_imu_（IMU 回调与 LIO 线程共用）
     std::deque<double> time_buffer_;
 
     std::deque<PointCloudType::Ptr> lidar_buffer_;

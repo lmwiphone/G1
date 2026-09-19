@@ -102,6 +102,28 @@ bool LidarLoc::Init(const std::string& config_path) {
         }
     }
 
+    // 融合比例 / 快速收敛参数：可选键，缺省保持默认值（老配置行为不变，除快速收敛默认开启外）
+    auto optional_param = [&yaml](const char* key, auto& value) {
+        try {
+            value = yaml.GetValue<std::remove_reference_t<decltype(value)>>("lidar_loc", key);
+        } catch (const std::exception&) {
+        }
+    };
+    optional_param("balance_factor", options_.balance_factor_);
+    optional_param("fast_converge_factor", options_.fast_converge_factor_);
+    optional_param("fast_converge_min_score", options_.fast_converge_min_score_);
+    optional_param("fast_converge_ang_deg", options_.fast_converge_ang_deg_);
+    optional_param("fast_converge_pos", options_.fast_converge_pos_);
+    optional_param("fast_converge_ok_frames", options_.fast_converge_ok_frames_);
+    optional_param("fast_converge_max_frames", options_.fast_converge_max_frames_);
+    options_.balance_factor_ = std::clamp(options_.balance_factor_, 0.0, 1.0);
+    options_.fast_converge_factor_ = std::clamp(options_.fast_converge_factor_, 0.0, 1.0);
+    LOG(INFO) << "lidar loc balance factor: " << options_.balance_factor_
+              << ", fast converge factor: " << options_.fast_converge_factor_
+              << " (score >= " << options_.fast_converge_min_score_ << ", until " << options_.fast_converge_ok_frames_
+              << "x residual < " << options_.fast_converge_ang_deg_ << " deg / " << options_.fast_converge_pos_
+              << " m, max " << options_.fast_converge_max_frames_ << " frames)";
+
     lidar_loc::grid_search_angle_step = yaml.GetValue<double>("lidar_loc", "grid_search_angle_step");
     lidar_loc::grid_search_angle_range = yaml.GetValue<double>("lidar_loc", "grid_search_angle_range");
 
@@ -350,6 +372,11 @@ bool LidarLoc::InitWithFP(CloudPtr input, const SE3& fp_pose) {
 
         //  定位成功，则清空失败记录
         fp_init_fail_pose_vec_.clear();
+
+        // 进入快速收敛阶段
+        fast_converge_frames_ = 0;
+        fast_converge_ok_cnt_ = 0;
+        converged_ = options_.fast_converge_factor_ <= options_.balance_factor_;
     } else {
         // 添加失败历史记录
         LOG(INFO) << "init failed, score: " << fitness_score;
@@ -652,9 +679,36 @@ void LidarLoc::Align(const CloudPtr& input) {
     //     }
     // }
 
-    // 用纯激光定位有点太抖了，加一些权重
-    Vec6d delta = (guess_from_lo.inverse() * current_pose_esti).log();
-    SE3 esti_balanced = guess_from_lo * SE3::exp(delta * 0.1);
+    // 用纯激光定位有点太抖了，加一些权重：每次只修正 NDT 相对 LO 预测残差的 balance_factor_（默认 10%）。
+    // 定位每 ~2 s 才跑一次（loc_on_kf）时，10° 的初始航向误差要 ~45 s 才降到 1°（2026-09-19 实测 τ≈19 s）。
+    // 初始化后的快速收敛阶段：NDT 分值足够高时用 fast_converge_factor_，残差连续达标后恢复平滑。
+    const SE3 ndt_residual = guess_from_lo.inverse() * current_pose_esti;
+    double balance = options_.balance_factor_;
+    if (!converged_) {
+        ++fast_converge_frames_;
+        const double res_ang_deg = ndt_residual.so3().log().norm() * 180.0 / M_PI;
+        const double res_pos = ndt_residual.translation().head<2>().norm();
+        if (fitness_score >= options_.fast_converge_min_score_) {
+            balance = std::max(balance, options_.fast_converge_factor_);
+        }
+        if (res_ang_deg < options_.fast_converge_ang_deg_ && res_pos < options_.fast_converge_pos_) {
+            ++fast_converge_ok_cnt_;
+        } else {
+            fast_converge_ok_cnt_ = 0;
+        }
+        LOG(INFO) << "fast converge #" << fast_converge_frames_ << ": residual " << res_ang_deg << " deg / "
+                  << res_pos << " m, score " << fitness_score << ", balance " << balance;
+        if (fast_converge_ok_cnt_ >= options_.fast_converge_ok_frames_) {
+            converged_ = true;
+            LOG(INFO) << "lidar loc converged after " << fast_converge_frames_ << " frames, balance back to "
+                      << options_.balance_factor_;
+        } else if (fast_converge_frames_ >= options_.fast_converge_max_frames_) {
+            converged_ = true;
+            LOG(WARNING) << "lidar loc not converged within " << fast_converge_frames_
+                         << " frames (low score or unstable match), fall back to balance " << options_.balance_factor_;
+        }
+    }
+    SE3 esti_balanced = guess_from_lo * SE3::exp(ndt_residual.log() * balance);
     current_pose_esti = esti_balanced;
 
     // double score_self = 0;
@@ -856,12 +910,14 @@ bool LidarLoc::Localize(SE3& pose, double& confidence, CloudPtr input, CloudPtr 
 
     LOG(INFO) << "loc from: " << pose.translation().transpose();
 
+    // pcl_ndt_ 会被 UpdateMapThread 在 match_mutex_ 下整体替换（启动后首轮必定替换一次），
+    // 读取它也必须持锁，否则可能解引用刚被释放的旧 NDT 对象。
+    UL lock(match_mutex_);
     if (pcl_ndt_->getInputTarget() == nullptr) {
         LOG(INFO) << "lidar loc target is null, skip";
         return false;
     }
 
-    UL lock(match_mutex_);
     NDTType::Ptr ndt = nullptr;
 
     if (use_rough_res) {

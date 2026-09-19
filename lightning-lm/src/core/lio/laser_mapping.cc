@@ -312,13 +312,17 @@ bool LaserMapping::Run() {
     }
 
     /// 更新kf_for_imu
-    kf_imu_ = kf_;
-    if (!measures_.imu_.empty()) {
-        double t = measures_.imu_.back()->timestamp;
-        for (auto &imu : imu_buffer_) {
-            double dt = imu->timestamp - t;
-            kf_imu_.Predict(dt, p_imu_->Q_, imu->angular_velocity, imu->linear_acceleration);
-            t = imu->timestamp;
+    {
+        // 遍历 imu_buffer_ 并覆盖 kf_imu_，须与 ProcessIMU()/GetIMUState() 互斥（见 SyncPackages）
+        UL lock(mtx_buffer_);
+        kf_imu_ = kf_;
+        if (!measures_.imu_.empty()) {
+            double t = measures_.imu_.back()->timestamp;
+            for (auto &imu : imu_buffer_) {
+                double dt = imu->timestamp - t;
+                kf_imu_.Predict(dt, p_imu_->Q_, imu->angular_velocity, imu->linear_acceleration);
+                t = imu->timestamp;
+            }
         }
     }
 
@@ -481,6 +485,9 @@ void LaserMapping::ProcessPointCloud2(CloudPtr cloud) {
 }
 
 bool LaserMapping::SyncPackages() {
+    // 定位在线模式下 Run()/SyncPackages() 跑在异步 LIO 线程，而 ProcessIMU() 在 ROS 回调线程
+    // 往 imu_buffer_ push_back；std::deque 并发 push_back 与 front/pop_front 是未定义行为。
+    UL lock(mtx_buffer_);
     if (lidar_buffer_.empty() || imu_buffer_.empty()) {
         LOG(INFO) << "lidar or imu is empty";
         return false;

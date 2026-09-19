@@ -735,10 +735,18 @@ void PGOImpl::UpdateFinalResultByWindow() {
 }
 
 void PGOImpl::PGOFrameToResult(const PGOFramePtr& frame, LocalizationResult& result) {
-    if ((result.timestamp_ - frame->timestamp_) > 0.3) {
+    // result.timestamp_ 已被 PGO::PubResult() 用 DR 外推到最新 IMU 时刻，这里比较的实际是
+    // "激光定位端到端延迟"（点云结束 → LIO → NDT 完成）。原门限 0.3 s：2026-09-19 实测启动时 LIO 同步失败
+    // 积压 3 帧、延迟 ~0.4 s，之后所有优化结果都被丢弃，输出恒为"首帧定位 × DR"，静止 15 min 偏 1.8 m / 11°。
+    // 结果随后由 ExtrapolateLocResult 用 DR 从帧时刻外推到最新时刻，延迟几秒内仍可用。
+    constexpr double kMaxLidarLocLatency = 3.0;
+    const double latency = result.timestamp_ - frame->timestamp_;
+    if (latency > kMaxLidarLocLatency) {
         /// 激光定位与当前时刻相差太多，则放弃设置此结果
+        LOG_EVERY_N(WARNING, 10) << "PGO drop lidar loc result, latency " << latency << " s";
         return;
     }
+    LOG_IF_EVERY_N(WARNING, latency > 0.5, 50) << "lidar loc latency " << latency << " s";
 
     // 复制PGOFrame中的信息到Result中
     result.timestamp_ = frame->timestamp_;

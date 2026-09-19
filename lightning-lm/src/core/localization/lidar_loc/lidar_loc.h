@@ -1,6 +1,7 @@
 #pragma once
 
 #include <pcl/registration/icp.h>
+#include <atomic>
 #include <chrono>
 #include <deque>
 #include <iostream>
@@ -48,6 +49,19 @@ class LidarLoc {
         // 前提：地图 z 轴与重力对齐（可用地图地面/墙面法向核验）。
         bool gravity_constrain_ = false;
         double gravity_constrain_max_deg_ = 15.0;      // 单次修正超过该角度视为异常，不修正
+
+        /// 跟踪阶段 NDT 结果与 LO 预测的融合比例（原硬编码 0.1）：每次激光定位只修正残差的这一比例
+        double balance_factor_ = 0.1;
+        /// 初始化后的快速收敛阶段：NDT 分值 >= fast_converge_min_score_ 时用更大的融合比例，
+        /// 连续 fast_converge_ok_frames_ 次残差 < (fast_converge_ang_deg_, fast_converge_pos_) 视为收敛，
+        /// 之后恢复 balance_factor_；超过 fast_converge_max_frames_ 次仍未收敛也退出快速阶段。
+        /// fast_converge_factor_ <= balance_factor_ 即关闭该功能（等价旧行为）。
+        double fast_converge_factor_ = 0.5;
+        double fast_converge_min_score_ = 1.5;
+        double fast_converge_ang_deg_ = 0.5;
+        double fast_converge_pos_ = 0.05;
+        int fast_converge_ok_frames_ = 3;
+        int fast_converge_max_frames_ = 50;
 
         /// 点云过滤
         // float filter_z_min_ = -1.0;
@@ -138,6 +152,9 @@ class LidarLoc {
     /// 激光定位是否认为LO有效
     bool LidarLocThinkLOReliable() { return lo_reliable_; }
 
+    /// 初始化后是否已完成快速收敛（未完成时上层应每帧送入点云，而不是只送关键帧）
+    bool Converged() const { return converged_.load(); }
+
    private:
     // 内部函数  ==========================================================================
     /**
@@ -211,6 +228,10 @@ class LidarLoc {
     bool initial_pose_set_ = false;  // 定位是否被手动设置
     SE3 initial_pose_;               // 手动设置的初始位姿
     bool loc_inited_ = false;        // 定位是否初始化成功
+
+    std::atomic_bool converged_{false};  // 初始化后快速收敛阶段是否结束（LIO 线程读取）
+    int fast_converge_frames_ = 0;       // 快速收敛阶段已处理的定位次数
+    int fast_converge_ok_cnt_ = 0;       // 连续残差达标次数
 
     double current_timestamp_ = 0;  // 本次输入的时间戳
     double last_timestamp_ = 0;     // 上次输入的时间戳

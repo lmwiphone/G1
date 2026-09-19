@@ -7,6 +7,7 @@
 #include <deque>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,10 @@ class Timer {
         auto t2 = std::chrono::steady_clock::now();
         auto time_used = std::chrono::duration_cast<std::chrono::duration<double>>(t2 - t1).count() * 1000;
 
+        // records_ 是进程级全局 std::map，定位在线模式下 ROS 回调线程（"Proc Lidar"）与
+        // LIO 异步线程（"Preprocess (Standard)" 等）会同时首次插入新 key，无锁时红黑树被并发改写，
+        // 启动瞬间偶发 SIGSEGV。只锁记账部分，不锁被测函数本身。
+        std::lock_guard<std::mutex> lock(mutex_);
         if (records_.find(func_name) != records_.end()) {
             records_[func_name].time_usage_in_ms_.emplace_back(time_used);
             while (records_[func_name].time_usage_in_ms_.size() > 2000) {
@@ -64,9 +69,13 @@ class Timer {
     static double GetMeanTime(const std::string& func_name);
 
     /// 清理记录
-    static void Clear() { records_.clear(); }
+    static void Clear() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        records_.clear();
+    }
 
    private:
     static std::map<std::string, TimerRecord> records_;
+    inline static std::mutex mutex_;  // 保护 records_（多线程调用 Evaluate）
 };
 }  // namespace lightning
