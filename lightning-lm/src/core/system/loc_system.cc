@@ -35,9 +35,13 @@ bool LocSystem::Init(const std::string &yaml_path) {
     livox_topic_ = yaml.GetValue<std::string>("common", "livox_lidar_topic");
 
     rclcpp::QoS qos(10);
+    // IMU 200 Hz 与雷达处理共用单线程 executor，单帧雷达处理可达 100+ ms；深度 10（50 ms）
+    // 会在回调被堵时丢 IMU，快转时旋转预测缺失导致航向跳变。内核 UDP 缓冲不足造成的丢包
+    // 另见 robot_bringup/system/60-dds-buffers.conf（必须安装，否则队列再大也没用）。
+    rclcpp::QoS imu_qos(100);
 
     imu_sub_ = node_->create_subscription<sensor_msgs::msg::Imu>(
-        imu_topic_, qos, [this](sensor_msgs::msg::Imu::SharedPtr msg) {
+        imu_topic_, imu_qos, [this](sensor_msgs::msg::Imu::SharedPtr msg) {
             IMUPtr imu = std::make_shared<IMU>();
             imu->timestamp = ToSec(msg->header.stamp);
             imu->linear_acceleration =
