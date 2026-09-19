@@ -21,6 +21,8 @@ struct LoopCandidate {
     SE3 Tij_;
 
     double ndt_score_ = 0.0;
+    double corr_trans_ = 0.0;    // 回环 NDT 结果相对当前位姿的修正量（平移，m）
+    double corr_rot_deg_ = 0.0;  // 同上（旋转，度）
 };
 
 }  // namespace lightning

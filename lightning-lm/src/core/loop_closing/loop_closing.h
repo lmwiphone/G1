@@ -50,6 +50,11 @@ class LoopClosing {
         int src_submap_range_ = 0;
         /// 只采用 NDT 的 x/y/航向修正：roll/pitch 已由 IMU 重力约束，稀疏单帧的 NDT 在这些方向上常给出 5~7° 假修正
         bool loop_4dof_ = false;
+        /// 回环接受还要求修正量不超过上限（<=0 不限制）。NDT 分值区分不了真假回环：2026-09-19 全部日志 1858 个候选中，
+        /// 分值 >=1.3 仍有 10 个修正 >2 m 或 >5° 的错误回环被接受，1.0~1.3 之间却有 50 个修正 <1 m 的正确回环被拒；
+        /// 而错误匹配几乎都表现为数米、数十度的修正，LIO 在本场地的漂移只有厘米~半米量级。
+        double max_corr_trans_ = 0.0;
+        double max_corr_rot_deg_ = 0.0;
     };
 
     LoopClosing(Options options = Options()) { options_ = options; }
