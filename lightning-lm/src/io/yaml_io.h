@@ -11,6 +11,16 @@
 
 namespace lightning {
 
+/// 可选配置键：存在时读入 value 并返回 true；缺省时 value 保持调用方给的默认值（老配置行为不变）
+template <typename T>
+bool ReadOptional(const YAML::Node &node, T &value) {
+    if (!node) {
+        return false;
+    }
+    value = node.as<T>();
+    return true;
+}
+
 /// 读取yaml配置文件的相关IO
 class YAML_IO {
    public:
@@ -45,6 +55,14 @@ class YAML_IO {
         assert(is_opened_);
         T res = yaml_node_[node_1][node_2][key].as<T>();
         return res;
+    }
+
+    /// 读取两层可选参数，见 ReadOptional
+    template <typename T>
+    bool GetOptional(const std::string &node, const std::string &key, T &value) const {
+        assert(is_opened_);
+        const YAML::Node section = yaml_node_[node];
+        return section && ReadOptional(section[key], value);
     }
 
     /// 设定类型为T的参数值

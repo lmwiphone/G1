@@ -5,11 +5,7 @@
 #ifndef LIGHTNING_LOC_SYSTEM_H
 #define LIGHTNING_LOC_SYSTEM_H
 
-#include <tf2_ros/static_transform_broadcaster.h>
-#include <tf2_ros/transform_broadcaster.h>
-#include <tf2_ros/buffer.h>
-#include <tf2_msgs/msg/tf_message.hpp>
-#include <mutex>
+#include <geometry_msgs/msg/transform_stamped.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -19,6 +15,7 @@
 #include "common/eigen_types.h"
 #include "common/imu.h"
 #include "common/keyframe.h"
+#include "core/system/ros_io.h"
 
 namespace lightning {
 
@@ -52,7 +49,6 @@ class LocSystem {
     void Spin();
 
    private:
-    void CacheStaticExtrinsic(const tf2_msgs::msg::TFMessage& msg);
     void PublishBaseTF(const geometry_msgs::msg::TransformStamped& lidar_pose);
 
     Options options_;
@@ -64,30 +60,15 @@ class LocSystem {
 
     /// 实时模式下的ros2 node, subscribers
     rclcpp::Node::SharedPtr node_;
-    std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_ = nullptr;
-    // Only /tf_static is ingested: never cache a dynamic map/body path as an extrinsic.
-    std::shared_ptr<tf2_ros::Buffer> static_tf_buffer_;
-    rclcpp::Subscription<tf2_msgs::msg::TFMessage>::SharedPtr static_tf_sub_;
-    std::mutex extrinsic_mutex_;
-    bool extrinsic_ready_ = false;
-    SE3 lidar_to_base_;  // T_lidar_parent = inverse(T_parent_lidar)，parent 为 body_link（平面模式）或 base_link
-    // 平面模式：URDF 以 body_link（躯干）为根时启用。map->base_link 只含位置与航向，
-    // 躯干倾斜由 base_link->body_link 动态发布。URDF 无 body_link 时退回 6DoF base_link。
-    bool planar_base_ = false;
-    std::string body_frame_ = "body_link";
-    std::string footprint_frame_ = "base_footprint";
-    std::shared_ptr<tf2_ros::StaticTransformBroadcaster> static_tf_broadcaster_ = nullptr;
-    double map_z_offset_ = 0.0;  // map 帧竖直偏移，使 z=0 落在地面
-    std::string base_frame_ = "base_link";
+    std::shared_ptr<BaseTFPublisher> base_tf_ = nullptr;  // map->base_link / base_link->body_link
+    double map_z_offset_ = 0.0;  // map 帧竖直偏移，使 z=0 落在地面（仅 6DoF 模式与 /base_link_pose 使用）
     std::string lidar_frame_ = "mid360_link";
 
     std::string imu_topic_;
     std::string cloud_topic_;
     std::string livox_topic_;
 
-    rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_ = nullptr;
-    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_ = nullptr;
-    rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr livox_sub_ = nullptr;
+    SensorSubscriptions sensor_subs_;
 
     /// 诊断用：配准后的 map 系点云。默认不创建，由 pub_registered_scan 参数开启。
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr scan_pub_ = nullptr;

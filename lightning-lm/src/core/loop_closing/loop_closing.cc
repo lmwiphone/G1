@@ -9,7 +9,6 @@
 
 #include <pcl/common/transforms.h>
 #include <pcl/registration/ndt.h>
-#include <yaml-cpp/yaml.h>
 
 #include "core/opti_algo/algo_select.h"
 #include "core/robust_kernel/cauchy.h"
@@ -54,16 +53,9 @@ void LoopClosing::Init(const std::string yaml_path) {
         options_.with_height_ = yaml.GetValue<bool>("loop_closing", "with_height");
 
         // 可选项，缺省保持原行为
-        const YAML::Node lc = YAML::LoadFile(yaml_path)["loop_closing"];
-        if (lc["ndt_resolutions"]) {
-            options_.ndt_resolutions_ = lc["ndt_resolutions"].as<std::vector<double>>();
-        }
-        if (lc["src_submap_range"]) {
-            options_.src_submap_range_ = lc["src_submap_range"].as<int>();
-        }
-        if (lc["loop_4dof"]) {
-            options_.loop_4dof_ = lc["loop_4dof"].as<bool>();
-        }
+        yaml.GetOptional("loop_closing", "ndt_resolutions", options_.ndt_resolutions_);
+        yaml.GetOptional("loop_closing", "src_submap_range", options_.src_submap_range_);
+        yaml.GetOptional("loop_closing", "loop_4dof", options_.loop_4dof_);
     }
 
     if (options_.online_mode_) {

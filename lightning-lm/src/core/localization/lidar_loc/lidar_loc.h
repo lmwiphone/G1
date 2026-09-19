@@ -62,6 +62,8 @@ class LidarLoc {
         double fast_converge_pos_ = 0.05;
         int fast_converge_ok_frames_ = 3;
         int fast_converge_max_frames_ = 50;
+        /// 跟踪阶段 NDT 分值低于该值时不采信本次匹配（只按 LO 递推），0 = 关闭（原行为：任何分值都按 balance 融合）
+        double track_min_score_ = 0.0;
 
         /// 点云过滤
         // float filter_z_min_ = -1.0;

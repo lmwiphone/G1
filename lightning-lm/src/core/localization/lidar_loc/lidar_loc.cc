@@ -78,11 +78,8 @@ bool LidarLoc::Init(const std::string& config_path) {
     options_.enable_icp_adjust_ = yaml.GetValue<bool>("lidar_loc", "enable_icp_adjust");
     options_.with_height_ = yaml.GetValue<bool>("loop_closing", "with_height");
     options_.try_self_extrap_ = yaml.GetValue<bool>("lidar_loc", "try_self_extrap");
-    try {
-        options_.gravity_constrain_ = yaml.GetValue<bool>("lidar_loc", "gravity_constrain");
-    } catch (const std::exception&) {
-        options_.gravity_constrain_ = false;  // 老配置无该键，保持原行为
-    }
+    options_.gravity_constrain_ = false;  // 老配置无该键，保持原行为
+    yaml.GetOptional("lidar_loc", "gravity_constrain", options_.gravity_constrain_);
     LOG(INFO) << "gravity constrain: " << options_.gravity_constrain_;
     // 地图坐标系中的重力"上"方向，来自 <map>/gravity_up.txt（三个数，地图系）。
     // 旧地图建图时世界系=首帧 IMU 系，会随建图起点姿态倾斜，方向需实测后写入；
@@ -103,26 +100,22 @@ bool LidarLoc::Init(const std::string& config_path) {
     }
 
     // 融合比例 / 快速收敛参数：可选键，缺省保持默认值（老配置行为不变，除快速收敛默认开启外）
-    auto optional_param = [&yaml](const char* key, auto& value) {
-        try {
-            value = yaml.GetValue<std::remove_reference_t<decltype(value)>>("lidar_loc", key);
-        } catch (const std::exception&) {
-        }
-    };
-    optional_param("balance_factor", options_.balance_factor_);
-    optional_param("fast_converge_factor", options_.fast_converge_factor_);
-    optional_param("fast_converge_min_score", options_.fast_converge_min_score_);
-    optional_param("fast_converge_ang_deg", options_.fast_converge_ang_deg_);
-    optional_param("fast_converge_pos", options_.fast_converge_pos_);
-    optional_param("fast_converge_ok_frames", options_.fast_converge_ok_frames_);
-    optional_param("fast_converge_max_frames", options_.fast_converge_max_frames_);
+    yaml.GetOptional("lidar_loc", "balance_factor", options_.balance_factor_);
+    yaml.GetOptional("lidar_loc", "fast_converge_factor", options_.fast_converge_factor_);
+    yaml.GetOptional("lidar_loc", "fast_converge_min_score", options_.fast_converge_min_score_);
+    yaml.GetOptional("lidar_loc", "fast_converge_ang_deg", options_.fast_converge_ang_deg_);
+    yaml.GetOptional("lidar_loc", "fast_converge_pos", options_.fast_converge_pos_);
+    yaml.GetOptional("lidar_loc", "fast_converge_ok_frames", options_.fast_converge_ok_frames_);
+    yaml.GetOptional("lidar_loc", "fast_converge_max_frames", options_.fast_converge_max_frames_);
+    yaml.GetOptional("lidar_loc", "track_min_score", options_.track_min_score_);
     options_.balance_factor_ = std::clamp(options_.balance_factor_, 0.0, 1.0);
     options_.fast_converge_factor_ = std::clamp(options_.fast_converge_factor_, 0.0, 1.0);
     LOG(INFO) << "lidar loc balance factor: " << options_.balance_factor_
               << ", fast converge factor: " << options_.fast_converge_factor_
               << " (score >= " << options_.fast_converge_min_score_ << ", until " << options_.fast_converge_ok_frames_
               << "x residual < " << options_.fast_converge_ang_deg_ << " deg / " << options_.fast_converge_pos_
-              << " m, max " << options_.fast_converge_max_frames_ << " frames)";
+              << " m, max " << options_.fast_converge_max_frames_ << " frames), track min score "
+              << options_.track_min_score_;
 
     lidar_loc::grid_search_angle_step = yaml.GetValue<double>("lidar_loc", "grid_search_angle_step");
     lidar_loc::grid_search_angle_range = yaml.GetValue<double>("lidar_loc", "grid_search_angle_range");
@@ -708,6 +701,11 @@ void LidarLoc::Align(const CloudPtr& input) {
                          << " frames (low score or unstable match), fall back to balance " << options_.balance_factor_;
         }
     }
+    // 低分匹配（走出地图覆盖区、遮挡、NDT 落入错误极小值）不融合，只沿 LO 递推，避免把错误结果逐帧累积成漂移。
+    if (converged_ && fitness_score < options_.track_min_score_) {
+        LOG(INFO) << "low score " << fitness_score << " < " << options_.track_min_score_ << ", follow LO only";
+        balance = 0.0;
+    }
     SE3 esti_balanced = guess_from_lo * SE3::exp(ndt_residual.log() * balance);
     current_pose_esti = esti_balanced;
 
@@ -930,11 +928,6 @@ bool LidarLoc::Localize(SE3& pose, double& confidence, CloudPtr input, CloudPtr 
     ndt->align(*output, guess_pose);
     trans = ndt->getFinalTransformation();
     confidence = ndt->getTransformationProbability();
-
-    auto tgt = ndt->getInputTarget();
-    if (!tgt->empty()) {
-        pcl::io::savePCDFile("./data/tgt.pcd", *tgt);
-    }
 
     if (loc_inited_ == false && confidence > options_.min_init_confidence_) {
         loc_success = true;
