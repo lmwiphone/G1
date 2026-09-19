@@ -5,6 +5,11 @@
 #ifndef LIGHTNING_SLAM_H
 #define LIGHTNING_SLAM_H
 
+#include <tf2_msgs/msg/tf_message.hpp>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/static_transform_broadcaster.h>
+#include <tf2_ros/transform_broadcaster.h>
+#include <mutex>
 #include <rclcpp/rclcpp.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <sensor_msgs/msg/imu.hpp>
@@ -97,6 +102,26 @@ class SlamSystem {
 
     /// 把 LIO 当前帧转到世界系后发布为 PointCloud2（诊断用，不影响建图结果）
     void PublishRegisteredScan();
+
+    /// 建图时发布 map->base_link（平面）与 base_link->body_link（躯干倾斜），与定位模式（LocSystem）一致，
+    /// 前端 /base_link_pose 由 robot_pose_pub 查该 TF 得到。位姿 = 最新关键帧的回环修正 × LIO 当前位姿。
+    void CacheStaticExtrinsic(const tf2_msgs::msg::TFMessage& msg);
+    void PublishBaseTF();
+
+    std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_ = nullptr;
+    std::shared_ptr<tf2_ros::StaticTransformBroadcaster> static_tf_broadcaster_ = nullptr;
+    // 只读 /tf_static，避免把动态 TF 当成外参缓存
+    std::shared_ptr<tf2_ros::Buffer> static_tf_buffer_;
+    rclcpp::Subscription<tf2_msgs::msg::TFMessage>::SharedPtr static_tf_sub_;
+    std::mutex extrinsic_mutex_;
+    bool extrinsic_ready_ = false;
+    bool planar_base_ = false;
+    SE3 lidar_to_parent_;  // T_lidar_parent，parent 为 body_link（平面模式）或 base_link
+    double last_tf_stamp_ = -1;
+    std::string base_frame_ = "base_link";
+    std::string body_frame_ = "body_link";
+    std::string lidar_frame_ = "mid360_link";
+    std::string footprint_frame_ = "base_footprint";
 
     /// 实时模式下的ros2 node, subscribers
     rclcpp::Node::SharedPtr node_;

@@ -123,6 +123,18 @@ bool SlamSystem::Init(const std::string& yaml_path) {
                       << registered_scan_frame_ << ", leaf=" << registered_scan_leaf_;
         }
 
+        // 建图时也发布机器人 TF（与定位模式同一套帧），否则前端 /base_link_pose 停在切模式前的旧值
+        base_frame_ = node_->declare_parameter<std::string>("base_frame", "base_link");
+        lidar_frame_ = node_->declare_parameter<std::string>("lidar_frame", "mid360_link");
+        body_frame_ = node_->declare_parameter<std::string>("body_frame", "body_link");
+        footprint_frame_ = node_->declare_parameter<std::string>("footprint_frame", "base_footprint");
+        static_tf_buffer_ = std::make_shared<tf2_ros::Buffer>(node_->get_clock());
+        static_tf_sub_ = node_->create_subscription<tf2_msgs::msg::TFMessage>(
+            "/tf_static", rclcpp::QoS(100).reliable().transient_local(),
+            [this](tf2_msgs::msg::TFMessage::ConstSharedPtr msg) { CacheStaticExtrinsic(*msg); });
+        tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(node_);
+        static_tf_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(node_);
+
         imu_topic_ = yaml["common"]["imu_topic"].as<std::string>();
         cloud_topic_ = yaml["common"]["lidar_topic"].as<std::string>();
         livox_topic_ = yaml["common"]["livox_lidar_topic"].as<std::string>();
@@ -366,6 +378,104 @@ void SlamSystem::PublishRegisteredScan() {
     scan_pub_->publish(msg);
 }
 
+void SlamSystem::CacheStaticExtrinsic(const tf2_msgs::msg::TFMessage& msg) {
+    std::lock_guard<std::mutex> lock(extrinsic_mutex_);
+    if (extrinsic_ready_) return;  // 安装外参固定，每个进程读一次
+    for (const auto& transform : msg.transforms) {
+        static_tf_buffer_->setTransform(transform, "static_extrinsic", true);
+    }
+    try {
+        // 优先 body_link（平面 base_link 模式）；旧 URDF 没有 body_link 时退回 base_link。
+        const bool has_body = !body_frame_.empty() && body_frame_ != base_frame_ &&
+                              static_tf_buffer_->canTransform(body_frame_, lidar_frame_, tf2::TimePointZero);
+        const std::string parent = has_body ? body_frame_ : base_frame_;
+        const auto transform = static_tf_buffer_->lookupTransform(parent, lidar_frame_, tf2::TimePointZero);
+        const auto& t = transform.transform.translation;
+        const auto& r = transform.transform.rotation;
+        Quatd q(r.w, r.x, r.y, r.z);
+        const Vec3d translation(t.x, t.y, t.z);
+        if (!q.coeffs().allFinite() || q.norm() < 1e-6 || !translation.allFinite()) {
+            RCLCPP_ERROR(node_->get_logger(), "Invalid static LiDAR extrinsic; TF output disabled");
+            return;
+        }
+        lidar_to_parent_ = SE3(q.normalized(), translation).inverse();
+        planar_base_ = has_body;
+        extrinsic_ready_ = true;
+        if (planar_base_) {
+            geometry_msgs::msg::TransformStamped fp;
+            fp.header.stamp = node_->now();
+            fp.header.frame_id = base_frame_;
+            fp.child_frame_id = footprint_frame_;
+            fp.transform.rotation.w = 1.0;
+            static_tf_broadcaster_->sendTransform(fp);
+        }
+        RCLCPP_INFO(node_->get_logger(), "Cached static extrinsic %s <- %s; mapping %s TF output enabled",
+                    parent.c_str(), lidar_frame_.c_str(), planar_base_ ? "planar base_link" : "6DoF base_link");
+    } catch (const tf2::TransformException& error) {
+        RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
+                             "Waiting for static base/LiDAR extrinsic: %s", error.what());
+    }
+}
+
+void SlamSystem::PublishBaseTF() {
+    if (tf_broadcaster_ == nullptr || lio_ == nullptr) {
+        return;
+    }
+    SE3 extrinsic;
+    {
+        std::lock_guard<std::mutex> lock(extrinsic_mutex_);
+        if (!extrinsic_ready_) {
+            return;
+        }
+        extrinsic = lidar_to_parent_;
+    }
+
+    const NavState state = lio_->GetState();
+    if (state.timestamp_ <= last_tf_stamp_) {
+        return;  // 同一时刻重复发布会让 TF 监听端报 TF_REPEATED_DATA
+    }
+    last_tf_stamp_ = state.timestamp_;
+
+    // 与 /map（g2p5 按关键帧优化位姿绘制）对齐：用最新关键帧的回环修正 T_opt * T_lio^-1 左乘 LIO 当前位姿。
+    // LIO 位姿即 T_world_lidar（PublishRegisteredScan 同一约定）。
+    SE3 map_to_lidar = state.GetPose();
+    if (auto kf = lio_->GetKeyframe()) {
+        map_to_lidar = kf->GetOptPose() * kf->GetLIOPose().inverse() * map_to_lidar;
+    }
+    const SE3 map_to_parent = map_to_lidar * extrinsic;
+
+    auto fill = [](geometry_msgs::msg::TransformStamped& msg, const SE3& T, double dz) {
+        msg.transform.translation.x = T.translation().x();
+        msg.transform.translation.y = T.translation().y();
+        msg.transform.translation.z = T.translation().z() + dz;
+        const auto r = T.unit_quaternion();
+        msg.transform.rotation.x = r.x();
+        msg.transform.rotation.y = r.y();
+        msg.transform.rotation.z = r.z();
+        msg.transform.rotation.w = r.w();
+    };
+    geometry_msgs::msg::TransformStamped output;
+    output.header.stamp = math::FromSec(state.timestamp_);
+    output.header.frame_id = "map";
+    output.child_frame_id = base_frame_;
+    if (!planar_base_) {
+        fill(output, map_to_parent, 0.0);
+        tf_broadcaster_->sendTransform(output);
+        return;
+    }
+    // 平面导航系：躯干 x 轴在水平面上的投影作为航向，base_link 贴地 z=0，倾斜放在 base_link->body_link。
+    const Mat3d R = map_to_parent.rotationMatrix();
+    const double yaw = std::atan2(R(1, 0), R(0, 0));
+    const SE3 map_to_base(SO3::rotZ(yaw), map_to_parent.translation());
+    const SE3 base_to_body(map_to_base.so3().inverse() * map_to_parent.so3(), Vec3d::Zero());
+    fill(output, map_to_base, -map_to_base.translation().z());
+    auto tilt = output;
+    tilt.header.frame_id = base_frame_;
+    tilt.child_frame_id = body_frame_;
+    fill(tilt, base_to_body, 0.0);
+    tf_broadcaster_->sendTransform(std::vector<geometry_msgs::msg::TransformStamped>{output, tilt});
+}
+
 void SlamSystem::ProcessIMU(const lightning::IMUPtr& imu) {
     if (running_ == false) {
         return;
@@ -383,6 +493,7 @@ void SlamSystem::ProcessLidar(const sensor_msgs::msg::PointCloud2::SharedPtr& cl
 
     // 放在关键帧判定之前，保证每一帧都能看到，而不是只有关键帧才更新。
     PublishRegisteredScan();
+    PublishBaseTF();
 
     auto kf = lio_->GetKeyframe();
     if (kf != cur_kf_) {
@@ -418,6 +529,7 @@ void SlamSystem::ProcessLidar(const livox_ros_driver2::msg::CustomMsg::SharedPtr
 
     // 放在关键帧判定之前，保证每一帧都能看到，而不是只有关键帧才更新。
     PublishRegisteredScan();
+    PublishBaseTF();
 
     auto kf = lio_->GetKeyframe();
     if (kf != cur_kf_) {
