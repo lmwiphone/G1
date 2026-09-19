@@ -69,13 +69,12 @@ system:
   with_g2p5: true # 是否需要栅格地图
   step_on_kf: false # 是否在关键帧处暂停
 
-  # 激光定位频率：配合 lidar_loc.loc_on_kf: false，每 2 帧 LIO 做一次 NDT（~5 Hz，单次 ~35-45 ms/4 线程）。
-  # 注意 AsyncMessageProcess 的 skip_num=2 才是"走一帧跳一帧"（=1 不跳帧）。
-  enable_lidar_loc_skip: true
+  # 激光定位只在 LIO 关键帧做（lidar_loc.loc_on_kf: true），不跳帧。
+  enable_lidar_loc_skip: false
   enable_lidar_loc_rviz: false
   enable_lidar_odom_skip: false
   evaluation: false
-  lidar_loc_skip_num: 2
+  lidar_loc_skip_num: 4
   lidar_odom_skip_num: 2
   map_path: ~/maps/new_map/
   map_save_root: ~/maps
@@ -120,9 +119,10 @@ lidar_loc:
   update_err_v: 0.2
   update_kf_dis: 2.0
   update_lidar_loc_score: 2.5
-  # 2026-09-19：true 时只在 LIO 关键帧做激光定位，静止时关键帧 2 s 一个，而每次只修正残差的 10%
-  # （balance_factor），实测启动航向误差收敛 τ≈19 s（10°→1° 约 43 s）。改为 false 后约 5 Hz，τ≈2 s。
-  loc_on_kf: false
+  # 只在 LIO 关键帧做激光定位（原版行为）。2026-09-19 用 map_0919_1438 包离线对比：改成每帧定位（false）时，
+  # NDT 结果沿行进方向系统性落后 0.13 m，被高频融合后累积成 7.6 m / 62° 漂移；true 时同数据 1.3 m / 7°。
+  # 启动慢收敛由 fast_converge_*（收敛前每帧定位）解决，不需要全程每帧定位。
+  loc_on_kf: true
   try_self_extrap: false
   # NDT 结果与 LO 预测的融合比例（旧代码硬编码 0.1），需新版 lidar_loc.cc 才生效，旧二进制忽略这些键。
   balance_factor: 0.1
