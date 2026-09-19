@@ -131,7 +131,6 @@ def generate_launch_description():
         condition=IfCondition(PythonExpression(['not ', use_composition])),
         actions=[
             Node(
-                prefix=["taskset -c 3-7"],
                 package='nav2_map_server',
                 executable='costmap_filter_info_server',
                 name='costmap_filter_info_server',
@@ -142,7 +141,6 @@ def generate_launch_description():
                 arguments=['--ros-args', '--log-level', log_level],
                 remappings=remappings),
             Node(
-                prefix=["taskset -c 3-7"],
                 package='nav2_map_server',
                 executable='map_server',
                 name='map_server',
@@ -153,7 +151,6 @@ def generate_launch_description():
                 arguments=['--ros-args', '--log-level', log_level],
                 remappings=remappings),
             Node(
-                prefix=["taskset -c 3-7"],
                 package='nav2_controller',
                 executable='controller_server',
                 output='screen',
@@ -163,7 +160,6 @@ def generate_launch_description():
                 arguments=['--ros-args', '--log-level', log_level],
                 remappings=remappings + [('cmd_vel', 'cmd_vel_nav')]),
             Node(
-                prefix=["taskset -c 3-7"],
                 package='nav2_smoother',
                 executable='smoother_server',
                 name='smoother_server',
@@ -174,7 +170,6 @@ def generate_launch_description():
                 arguments=['--ros-args', '--log-level', log_level],
                 remappings=remappings),
             Node(
-                prefix=["taskset -c 3-7"],
                 package='nav2_planner',
                 executable='planner_server',
                 name='planner_server',
@@ -185,7 +180,6 @@ def generate_launch_description():
                 arguments=['--ros-args', '--log-level', log_level],
                 remappings=remappings),
             Node(
-                prefix=["taskset -c 3-7"],
                 package='nav2_behaviors',
                 executable='behavior_server',
                 name='behavior_server',
@@ -196,7 +190,6 @@ def generate_launch_description():
                 arguments=['--ros-args', '--log-level', log_level],
                 remappings=remappings + [('cmd_vel', 'cmd_vel_nav')]),
             Node(
-                prefix=["taskset -c 3-7"],
                 package='nav2_bt_navigator',
                 executable='bt_navigator',
                 name='bt_navigator',
@@ -207,8 +200,7 @@ def generate_launch_description():
                 arguments=['--ros-args', '--log-level', log_level],
                 remappings=remappings),
             # Node(
-            #     prefix=["taskset -c 3-7"],
-            #    package='nav2_waypoint_follower',
+            #     #    package='nav2_waypoint_follower',
             #     executable='waypoint_follower',
             #     name='waypoint_follower',
             #     output='screen',
@@ -218,8 +210,7 @@ def generate_launch_description():
             #     arguments=['--ros-args', '--log-level', log_level],
             #     remappings=remappings),
             # Node(
-            #     prefix=["taskset -c 3-7"],
-            #     package='aid_waypoint_follower',
+            #     #     package='aid_waypoint_follower',
             #     executable='waypoint_follower',
             #     name='waypoint_follower',
             #     output='screen',
@@ -229,7 +220,6 @@ def generate_launch_description():
             #     arguments=['--ros-args', '--log-level', log_level],
             #     remappings=remappings),
             Node(
-                prefix=["taskset -c 3-7"],
                 package='nav2_velocity_smoother',
                 executable='velocity_smoother',
                 name='velocity_smoother',
@@ -242,8 +232,7 @@ def generate_launch_description():
                         [('cmd_vel', 'cmd_vel_nav'), ('cmd_vel_smoothed', 'cmd_vel')]),
 
             # Node(
-            #         prefix=["taskset -c 3-7"],
-            #         package='aid_pointcloud_filter',
+            #         #         package='aid_pointcloud_filter',
             #         executable='aid_pointcloud_filter_node',
             #         name='cloud_filter_down_rgbd_node',
             #         output='screen',
@@ -254,7 +243,6 @@ def generate_launch_description():
             #         remappings=remappings
             #     ),
             Node(
-                prefix=["taskset -c 3-7"],
                 package='nav2_lifecycle_manager',
                 executable='lifecycle_manager',
                 name='lifecycle_manager_navigation',

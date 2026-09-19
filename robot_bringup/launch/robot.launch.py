@@ -46,7 +46,7 @@ def _status_manager(context):
     use_sim_time = LaunchConfiguration('use_sim_time')
     return [Node(
         package='robot_bringup', executable='robot_status_manager_node',
-        name='robot_status_manager_node', prefix=['taskset -c 3-7'], output='screen',
+        name='robot_status_manager_node', output='screen',
         # 本节点是 SLAM/Nav2 的唯一所有者：按 startup_mode 拉起，之后由前端
         # mode_set 切换建图/定位。参数透传保证与顶层直接启动时配置一致。
         parameters=[{
@@ -165,32 +165,31 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('start_backend')),
         actions=[
             Node(package='robot_bringup', executable='robot_pose_pub_node',
-                 name='robot_pose_pub_node', prefix=['taskset -c 3-7'], output='screen',
+                 name='robot_pose_pub_node', output='screen',
                  parameters=[{'use_sim_time': use_sim_time}]),
             Node(package='robot_bringup', executable='editor_map_node',
-                 name='editor_map_node', prefix=['taskset -c 3-7'], output='screen',
+                 name='editor_map_node', output='screen',
                  parameters=[{'use_sim_time': use_sim_time}]),
             Node(package='aid_robot_py', executable='map_manager_node',
-                 name='map_manager_node', prefix=['taskset -c 3-7'], output='screen',
+                 name='map_manager_node', output='screen',
                  parameters=[{'use_sim_time': use_sim_time}]),
             OpaqueFunction(function=_status_manager),
             Node(package='aid_robot_py', executable='map_transform_node',
-                 name='map_transform_node', prefix=['taskset -c 3-7'], output='screen',
+                 name='map_transform_node', output='screen',
                  parameters=[{'use_sim_time': use_sim_time}]),
-            # launch_manager 拉起的建图/定位/导航/RViz 都继承它的 CPU 亲和性。限制在 3-7 时
-            # 建图进程（~2.7 核）与 RViz、Nav2 挤 5 核，接收线程被饿住，IMU 队列溢出丢数据，
-            # 快转后地图出现多层墙；因此给它 3-13。
+            # 不要加 taskset 绑核：launch_manager 拉起的建图/定位/导航/RViz 都继承其亲和性，
+            # 曾限制在 3-7 时建图进程与 RViz、Nav2 挤 5 核，接收线程被饿住，IMU 丢数据，地图多层墙。
             Node(package='aid_robot_py', executable='launch_manager_node',
-                 name='launch_manager_node', prefix=['taskset -c 3-13'], output='screen',
+                 name='launch_manager_node', output='screen',
                  parameters=[{'use_sim_time': use_sim_time}]),
             # 禁行区地图节点只在 use_keepout:=true（默认）时启动：前端画禁行线走
             # /aid_draw_forbidden_line，由它生成 /keepout_filter_map 给 Nav2 keepout 层。
             Node(package='robot_bringup', executable='forbidden_map_create_node',
                  condition=IfCondition(LaunchConfiguration('use_keepout')),
-                 name='forbidden_map_create_node', prefix=['taskset -c 3-7'], output='screen',
+                 name='forbidden_map_create_node', output='screen',
                  parameters=[{'use_sim_time': use_sim_time}]),
             Node(package='aid_robot_py', executable='waypoint_manage_node',
-                 name='waypoint_manage_node', prefix=['taskset -c 3-7'], output='screen',
+                 name='waypoint_manage_node', output='screen',
                  parameters=[{'use_sim_time': use_sim_time}]),
         ],
     )

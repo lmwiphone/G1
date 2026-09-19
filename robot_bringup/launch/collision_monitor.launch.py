@@ -42,7 +42,6 @@ def generate_launch_description():
 
     # Collision Monitor is a lifecycle node; it must be configured & activated
     collision_monitor_node = LifecycleNode(
-        prefix=["taskset -c 3-7"],
         package='nav2_collision_monitor',
         executable='collision_monitor',
         name='collision_monitor',
@@ -58,7 +57,6 @@ def generate_launch_description():
 
     # Automatically bring collision_monitor through lifecycle transitions
     lifecycle_manager_node = Node(
-        prefix=["taskset -c 3-7"],
         package='nav2_lifecycle_manager',
         executable='lifecycle_manager',
         name='lifecycle_manager_collision_monitor',

@@ -117,7 +117,6 @@ def generate_launch_description():
                     package='rosbridge_server',
                     executable='rosbridge_websocket',
                     name='rosbridge_websocket',
-                    prefix=["taskset -c 3-7"],
                     output='screen',
                     parameters=[
                         {'certfile': LaunchConfiguration('certfile')},
@@ -150,7 +149,6 @@ def generate_launch_description():
                     package='rosbridge_server',
                     executable='rosbridge_websocket',
                     name='rosbridge_websocket',
-                    prefix=["taskset -c 3-7"],
                     output='screen',
                     parameters=[
                         {'port': LaunchConfiguration('port')},
@@ -179,7 +177,6 @@ def generate_launch_description():
             package='rosapi',
             executable='rosapi_node',
             name='rosapi',
-            prefix=["taskset -c 3-7"],
             parameters=[
                 {'topics_glob': LaunchConfiguration('topics_glob')},
                 {'services_glob': LaunchConfiguration('services_glob')},
