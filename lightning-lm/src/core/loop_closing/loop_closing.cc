@@ -64,12 +64,6 @@ void LoopClosing::Init(const std::string yaml_path) {
         if (lc["loop_4dof"]) {
             options_.loop_4dof_ = lc["loop_4dof"].as<bool>();
         }
-        if (lc["max_corr_trans"]) {
-            options_.max_corr_trans_ = lc["max_corr_trans"].as<double>();
-        }
-        if (lc["max_corr_rot_deg"]) {
-            options_.max_corr_rot_deg_ = lc["max_corr_rot_deg"].as<double>();
-        }
     }
 
     if (options_.online_mode_) {
@@ -172,9 +166,7 @@ void LoopClosing::ComputeLoopCandidates() {
     std::vector<LoopCandidate> succ_candidates;
     for (const auto& lc : candidates_) {
         // LOG(INFO) << "candi " << lc.idx1_ << ", " << lc.idx2_ << " s: " << lc.ndt_score_;
-        const bool trans_ok = options_.max_corr_trans_ <= 0 || lc.corr_trans_ < options_.max_corr_trans_;
-        const bool rot_ok = options_.max_corr_rot_deg_ <= 0 || lc.corr_rot_deg_ < options_.max_corr_rot_deg_;
-        if (lc.ndt_score_ > options_.ndt_score_th_ && trans_ok && rot_ok) {
+        if (lc.ndt_score_ > options_.ndt_score_th_) {
             succ_candidates.emplace_back(lc);
         }
     }
@@ -281,12 +273,11 @@ void LoopClosing::ComputeForCandidate(lightning::LoopCandidate& c) {
 
     c.Tij_ = kf1->GetOptPose().inverse() * SE3(q, t);
 
-    const Mat4f d = Tw2_init.inverse() * Tw2;
-    c.corr_trans_ = d.block<3, 1>(0, 3).norm();
-    c.corr_rot_deg_ = Eigen::AngleAxisf(d.block<3, 3>(0, 0)).angle() * 180.0 / M_PI;
     if (options_.verbose_) {
+        const Mat4f d = Tw2_init.inverse() * Tw2;
         LOG(INFO) << "lc cand " << c.idx1_ << "-" << c.idx2_ << " score " << c.ndt_score_ << " corr "
-                  << c.corr_trans_ << " m " << c.corr_rot_deg_ << " deg";
+                  << d.block<3, 1>(0, 3).norm() << " m "
+                  << Eigen::AngleAxisf(d.block<3, 3>(0, 0)).angle() * 180.0 / M_PI << " deg";
     }
 
     // pcl::io::savePCDFileBinaryCompressed(
