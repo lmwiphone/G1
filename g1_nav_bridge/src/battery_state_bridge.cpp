@@ -94,7 +94,10 @@ class BatteryStateBridge final : public rclcpp::Node {
     battery.location = location_;
 
     publisher_->publish(battery);
-    RCLCPP_INFO_THROTTLE(
+    // 每 5 s 一条的电量播报会淹没导航日志；降为 DEBUG。
+    // 需要时用 --log-level g1_battery_state_bridge:=debug 打开，
+    // 或直接订阅 /battery_state 看数据。
+    RCLCPP_DEBUG_THROTTLE(
         get_logger(), *get_clock(), 5000,
         "Battery: %.1f%%, %.3f V, %.3f A, temp=%.1f C, cells=%zu",
         battery.percentage * 100.0F, battery.voltage, battery.current,

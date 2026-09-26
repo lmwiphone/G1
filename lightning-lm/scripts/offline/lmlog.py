@@ -257,22 +257,27 @@ def cmd_online(d):
         print(f'TF publish gaps (receive time): max {max(gaps):.3f}s, >0.2s: {sum(g > 0.2 for g in gaps)}')
     logp = next(p for p in (os.path.join(d, n) for n in ('run_loc_online.INFO', 'run_slam_online.INFO')) if os.path.exists(p))
     cmd_tfdrift(os.path.join(d, 'tf.txt'), logp)
-    # /base_link_pose 对照：每条取接收时刻之前最近一条 map->base_link
+    # /base_link_pose 对照：stamp 与某条 map->base_link 相同则按 stamp 配对（新版 robot_pose_pub 用 TF 时间戳）；
+    # 否则（旧版 stamp=now()）取接收时刻之前最近一条，负载高时 tfrec 接收滞后会出现假差值
     recv = [r[8] for r in mb]
-    diffs, ages = [], []
+    by_stamp = {round(r[0], 6): r for r in mb}
+    diffs, ages, n_stamp = [], [], 0
     for p in blp:
-        i = bisect.bisect_right(recv, p[8]) - 1
-        if i < 0:
-            continue
-        r = mb[i]
+        r = by_stamp.get(round(p[0], 6))
+        if r is not None:
+            n_stamp += 1
+        else:
+            i = bisect.bisect_right(recv, p[8]) - 1
+            if i < 0:
+                continue
+            r = mb[i]
         diffs.append((math.hypot(p[1] - r[1], p[2] - r[2]), abs(wrap(_rpy(p[4:8])[2] - _rpy(r[4:8])[2]))))
-        ages.append(p[8] - r[8])
+        ages.append(p[8] - mb[-1][8] if p[8] > mb[-1][8] else 0.0)
     if diffs:
-        live = [(dd, a) for dd, a in zip(diffs, ages) if a < 1.0]
-        print(f'/base_link_pose {len(blp)} msgs | while TF live ({len(live)}): max diff vs latest TF '
-              f'{max(x[0][0] for x in live) if live else 0:.3f} m / {max(x[0][1] for x in live) if live else 0:.2f} deg | '
-              f'published >1s after last TF (stale, same pose repeated): {sum(a >= 1.0 for a in ages)} msgs, '
-              f'max age {max(ages):.1f}s | header.stamp - TF stamp: {blp[-1][0] - mb[-1][0]:.0f}s (stamp=now(), not TF time)')
+        print(f'/base_link_pose {len(blp)} msgs, stamp == TF stamp: {n_stamp} | max diff vs paired TF '
+              f'{max(x[0] for x in diffs):.3f} m / {max(x[1] for x in diffs):.2f} deg | '
+              f'published after last TF: {sum(a > 0 for a in ages)} msgs, last {max(ages):.2f}s later | '
+              f'last header.stamp - last TF stamp: {blp[-1][0] - mb[-1][0]:.3f}s')
 
 
 def cmd_tfref(tf_path, ref_path, x, y, yaw, step='0'):

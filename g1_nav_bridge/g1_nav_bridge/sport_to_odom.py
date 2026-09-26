@@ -103,3 +103,10 @@ def main(args=None):
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
+
+if __name__ == '__main__':
+    # CMakeLists 用 install(PROGRAMS ...) 把本文件直接装成可执行，setup.py 的
+    # console_scripts 入口点不生效，所以必须自带 __main__ 守卫；否则 launch 起它时
+    # Python 从头跑到文件末尾就以 0 退出（"process has finished cleanly"，无日志），
+    # 节点看似启动实则从未运行。2026-09-22 由此发现 /odom 一直没有发布者。
+    main()

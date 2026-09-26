@@ -19,3 +19,18 @@ pointcloud.ordered_pc: false
 # 3 = High Accuracy：提高双目匹配置信度门限，宁可留空洞也不输出误匹配点。
 # 默认预设下掠射远地面的误匹配点会被抬高成假障碍（STVL 在局部 costmap 满屏标记）。
 depth_module.visual_preset: 3
+
+# 深度滤波调参值。目标是深度噪点/毛刺和地面"不平、有空洞、打穿"这类原始深度质量问题。
+# spatial：边缘保持的平滑，默认开（sensor_driver.launch.py），2026-09-24 调到最强平滑：
+#   filter_magnitude 5 = 最大迭代次数（1~5），filter_smooth_alpha 0.25 = 最强平滑（0.25~1，1 = 不滤）；
+#   filter_smooth_delta 20 保持不变：调大会跨物体边缘平滑，把前景/背景混成悬空飞点；
+#   holes_fill 0：不补洞，不编造深度。
+spatial_filter.filter_magnitude: 5
+spatial_filter.filter_smooth_alpha: 0.25
+spatial_filter.filter_smooth_delta: 20
+spatial_filter.holes_fill: 0
+# temporal（由 realsense_depth_filters 控制，默认关）：逐像素时间平滑，压逐帧闪烁。holes_fill 在这里是 persistency 模式，驱动默认 3，
+# 必须设 0：非 0 会用历史深度补当前空洞，人走开后原位置还留着"记忆"，正好制造残影。
+temporal_filter.filter_smooth_alpha: 0.4
+temporal_filter.filter_smooth_delta: 20
+temporal_filter.holes_fill: 0

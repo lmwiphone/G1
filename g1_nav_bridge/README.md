@@ -42,21 +42,26 @@ header 为 `odom`，child 为 `base_link`，保留源时间戳，Z/roll/pitch �
 - 不使用：第二个速度桥接、pelvis/全关节 URDF、pose_bridge、位姿差分生成里程计、
   `/lightning/map_pose`/`lio_pose` 新接口、SLAM 核心 patch 和自动打补丁工具。
 - 原前端的禁行区、任务与地图接口保持独立，未删除。
-- `aid_navigation2/launch/g1_config.py` 是唯一的 G1 Nav2 参数生成器，
-  不再维护参考工程那份 `nav_config.py`。
+- 2026-09-21 起取消参数生成器（原 `aid_navigation2/launch/g1_config.py`）：
+  Nav2 与 collision_monitor 的全部参数直接写在
+  `aid_navigation2/param/nav2_params.yaml` 与
+  `robot_bringup/param/collision_monitor_params.yaml` 里，launch 只按
+  `use_keepout` / `use_realsense_obstacles` 删层，不再改写任何数值。
 
 ## 配置审查结果
 
 `aid_navigation2/param/nav2_params.yaml` 已清理 AMCL、旧 Aurora/STVL、未启动的
 waypoint 插件及重复 collision 配置。保留 MPPI、SmacPlanner2D、原 BT、自定义禁行区。
 统一真机时间、map/base_link、/odom、0.40 m 初始测试半径和低速限制，补齐目标/进度检查器。
-G1 启动入口按 ROS_DISTRO 适配 Humble/Jazzy 的标准插件名及 progress checker 参数。
+目标发行版只有 jazzy：插件名写 `::` 形式，bt_navigator 不列 plugin_lib_names，
+controller_server 用复数 `progress_checker_plugins`（humble 需自行改回单数）。
 自定义 `aid_costmap_plugin/KeepoutLayer` 是普通 Layer，仍放在 plugins 中，不改成 filters。
 
 **YAML 不是无需现场参数即可安全行驶的承诺。** 地图原点可能在雷达处，
 costmap 的高度过滤使用 map 坐标；collision_monitor 的高度使用 base_link 坐标。
-统一入口要求填写 map 中的地面高度；当前 URDF 将 base_link 定义为地面投影，
-所以 base_floor_z 默认 0。保留地面上方 0.10～1.80 m 的障碍物。
+平面模式下 map->base_link 的 z 恒为 0（base_link 即地面投影），两边高度基准一致，
+所以 yaml 里的高度就是 map 系高度，不再需要 floor_z / base_floor_z 参数。
+保留地面上方 0.10～1.80 m 的障碍物。
 低于 10 cm 的障碍物不在此检测范围；台阶、坑洞及点云盲区也不是本配置的完整防护对象。
 机器人半径需覆盖实际手臂/身体姿态，雷达自体回波及障碍物检测需要现场验证。
 
@@ -103,7 +108,7 @@ floor_z 的检查依据（前提是 base_link 确实在地面），并与地面�
 若不是 0，填写实际值。此处不自动平移地图，不修改 TF。
 
 先启动当前已验证的 Lightning **定位**、对应 URDF、Livox 驱动与
-`livox_custom_to_pointcloud2`。确认 `/livox/points` 是 PointCloud2，
+`point_filter`（`/livox/lidar` → `/livox/points`，按 tag 剔除噪点）。确认 `/livox/points` 是 PointCloud2，
 frame 为 `mid360_link`，`map → base_link` 连续有效。
 不要同时启动建图与导航 map_server 争抢 `/map`。
 

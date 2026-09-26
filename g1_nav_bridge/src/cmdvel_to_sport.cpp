@@ -83,6 +83,15 @@ class CmdVelToSport final : public rclcpp::Node {
       RCLCPP_ERROR(get_logger(), "Invalid cmd_vel; sending zero velocity");
       velocity.fill(0.0F);
     }
+    // 【硬性安全约束】G1 收到负的前进速度会直接摔倒。无论上游 Nav2 / 遥控 / 恢复行为
+    // 发来什么，这里一律钳到 >= 0；这是最后一道闸，不依赖任何上游配置正确。
+    if (velocity[0] < 0.0F) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                           "拒绝负的前进速度 vx=%.3f（G1 倒走会摔倒），已钳为 0",
+                           static_cast<double>(velocity[0]));
+      velocity[0] = 0.0F;
+    }
+
     const std::array<float, 3> raw = velocity;
     velocity = ApplyMinimumVelocity(velocity);
     if (velocity != raw) {

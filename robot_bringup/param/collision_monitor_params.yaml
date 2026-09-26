@@ -1,41 +1,40 @@
+# G1 碰撞停车：本文件就是运行值，launch 不再改写（2026-09-21 起）。
+# 平面模式下 base_link 为地面投影（地面 z=0），定位直接给 map->base_link，
+# 所以 odom_frame_id 就是 map，且必须关掉 base_shift_correction。
 collision_monitor:
   ros__parameters:
     use_sim_time: false
-    base_frame_id: "base_footprint"
-    odom_frame_id: "odom"
+    base_frame_id: "base_link"
+    # 没有独立里程计坐标系：定位输出 map->base_link，位姿外推关闭。
+    odom_frame_id: "map"
+    base_shift_correction: False
     cmd_vel_in_topic: "/cmd_vel"
     cmd_vel_out_topic: "/cmd_vel_safe"
+    enable_stamped_cmd_vel: false
     state_topic: "collision_monitor_state"
     transform_tolerance: 0.5
-    source_timeout: 5.0
-    base_shift_correction: True
+    # registered_scan 为 10 Hz 单帧；0.35 s 内没新帧就判失效。
+    source_timeout: 0.35
     stop_pub_timeout: 2.0
     bond_heartbeat_period: 0.1
-    # Polygons represent zone geometry
-    polygons: ["FootprintApproach", "SafetyZone"]
-    FootprintApproach:
-      type: "polygon"
-      footprint_topic: "/local_costmap/published_footprint"
-      action_type: "approach"
-      min_points: 4
-      visualize: True
-      enabled: False  # 建图模式下local_costmap未激活，禁用此polygon避免延时
-      # Slow down when within this zone
-      approach_time_before_collision: 2.0  # time to collision (seconds)
+    # 只保留固定停车圈：local_costmap 未激活时 footprint 话题不存在，approach 型多边形会一直等待。
+    polygons: ["SafetyZone"]
     SafetyZone:
       type: "circle"
-      action_type: "approach"
-      radius: 0.23
+      action_type: "stop"
+      # robot_radius(0.50) + 0.20 余量，与 nav2_params.yaml 的 robot_radius 手工保持一致。
+      radius: 0.70
+      min_points: 4
       visualize: True
       enabled: True
-      # Allow backing away: only intervene when time-to-collision is small
-      approach_time_before_collision: 0.5
     observation_sources: ["pointcloud1"]
     pointcloud1:
       type: "pointcloud"
-      topic: "/livox/points"
-      min_height: 0.05
-      max_height: 1.5
+      # 与 Nav2 障碍层同源：LIO 去畸变后的单帧点云。
+      topic: "/lightning/registered_scan"
+      # map 系高度，地面 z=0。
+      min_height: 0.10
+      max_height: 1.8
       enabled: True
       obstacles_angle: 1.5708  # 90 degrees, range of angles to check
 

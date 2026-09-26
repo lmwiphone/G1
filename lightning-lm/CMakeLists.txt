@@ -24,7 +24,8 @@ if (CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif ()
 
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
+# 可执行文件输出到编译目录，不再写进源码树的 bin/（运行一律用 install/lib/lightning 下的安装版）
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 # set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/libs)
 # set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/libs)
 
@@ -55,11 +56,6 @@ install(DIRECTORY config
         DESTINATION lib/${PROJECT_NAME}/
 )
 install(DIRECTORY config launch urdf DESTINATION share/${PROJECT_NAME})
-
-install(PROGRAMS scripts/livox_custom_to_pointcloud2.py
-        DESTINATION lib/${PROJECT_NAME}
-        RENAME livox_custom_to_pointcloud2
-)
 
 add_subdirectory(thirdparty/livox_ros_driver)
 

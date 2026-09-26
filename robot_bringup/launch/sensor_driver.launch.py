@@ -36,6 +36,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'realsense_enable_color', default_value='true', choices=['true', 'false'],
             description='点云不再需要 color；纯避障场景可设 false 省带宽'),
+        DeclareLaunchArgument(
+            'realsense_depth_filters', default_value='false', choices=['true', 'false'],
+            description='temporal 深度滤波（spatial 已默认开）；temporal 会用历史深度制造残影，默认关'),
         DeclareLaunchArgument('realsense_config', default_value=os.path.join(
             get_package_share_directory('robot_bringup'), 'param',
             'realsense_g1.yaml')),
@@ -68,13 +71,23 @@ def generate_launch_description():
                 'pointcloud.enable': 'true',
                 'pointcloud.allow_no_texture_points': 'true',
                 # 848x480 全分辨率点云约 34 万点/帧（~7MB，9Hz），best-effort 订阅大量丢帧、
-                # STVL 体素滤波吃满 CPU，实测 2~3m 障碍几乎标不上。深度先 4 倍降采样
-                # （212x120，约 2.5 万点），3m 处点距约 2cm，足够 5cm 体素。
+                # STVL 体素滤波吃满 CPU，实测 2~3m 障碍几乎标不上。
+                # 2026-09-24 由 4 倍改 6 倍降采样（212x120 → 144x80，点数约为原来的 44%）：
+                # ≥4 倍时 librealsense 按块内非零深度取均值，孤立噪点被周围像素稀释。
+                # 代价：2.5 m 处点距 ~3.5 cm，5 cm 体素里的点数可能不够 voxel_min_points 4。
                 'decimation_filter.enable': 'true',
-                'decimation_filter.filter_magnitude': '4',
+                'decimation_filter.filter_magnitude': '6',
                 # 实测深度 >4m 的点 100% 落在地面以下 2.6~3.4m（地面反光导致深度偏大，
                 # 视野上沿约 3.9m 就已打到地面），3~4m 也有 15%。只保留 3m 内，远处交给雷达。
                 'clip_distance': '3.0',
+                # 地面"不平、有空洞、打穿"是原始深度质量问题，STVL 参数管不到。
+                # 顺序由 realsense-ros 固定：decimation -> spatial -> temporal -> pointcloud。
+                # 不开 hole_filling_filter：它会编造深度，就是我们要消灭的那种假点。
+                # 调参值在 realsense_g1.yaml（rs_launch 只转发白名单里的 launch 参数，其余静默丢弃）。
+                # spatial（保边平滑）默认开；temporal 仍由 realsense_depth_filters 控制、默认关：
+                # 它用历史帧深度维持当前像素，人走开后原位置还留着深度，正好制造残影。
+                'spatial_filter.enable': 'true',
+                'temporal_filter.enable': LaunchConfiguration('realsense_depth_filters'),
                 'align_depth.enable': 'false',
                 'enable_gyro': 'false',
                 'enable_accel': 'false',
@@ -88,16 +101,14 @@ def generate_launch_description():
                 ),
             ],
         ),
+        # /livox/lidar（CustomMsg）-> /livox/points：按 MID360 tag 剔除低置信度噪点，并做与 lightning-lm 预处理相同的
+        # 抽点/盲区/雷达系高度裁剪（参数见 point_filter/config/point_filter.yaml）。LIO 仍直接订阅 /livox/lidar。
         Node(
-            package='lightning',
-            executable='livox_custom_to_pointcloud2',
-            name='livox_custom_to_pointcloud2',
-            parameters=[{
-                'input_topic': '/livox/lidar',
-                'output_topic': '/livox/points',
-                'frame_id': 'mid360_link',
-                'point_stride': 1,
-            }],
+            package='point_filter',
+            executable='point_filter_node',
+            name='point_filter',
+            parameters=[os.path.join(
+                get_package_share_directory('point_filter'), 'config', 'point_filter.yaml')],
             output='screen',
         )
     ])

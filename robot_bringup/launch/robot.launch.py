@@ -56,10 +56,10 @@ def _status_manager(context):
             'default_map_dir': LaunchConfiguration('map_dir').perform(context),
             'localization_launch_args': _launch_args(
                 context, 'with_ui', 'with_2dui', 'start_rviz', 'pub_registered_scan'),
+            # Nav2 的数值参数全在 aid_navigation2/param/nav2_params.yaml 里，只透传开关。
             'navigation_launch_args': _launch_args(
-                context, 'cloud_topic', 'sensor_frame', 'use_realsense_obstacles',
-                'realsense_topic', 'robot_radius', 'use_collision_monitor', 'use_keepout',
-                start_bridge='true'),
+                context, 'use_realsense_obstacles', 'use_d435_mark_filter',
+                'use_collision_monitor', 'use_keepout', start_bridge='true'),
             'mapping_launch_args': _launch_args(
                 context, 'map_save_root', 'with_ui', 'with_2dui', 'start_rviz',
                 'pub_registered_scan', 'floor_height', 'min_obstacle_height',
@@ -92,6 +92,7 @@ def generate_launch_description():
             'realsense_serial_no': LaunchConfiguration('realsense_serial_no'),
             'realsense_initial_reset': LaunchConfiguration('realsense_initial_reset'),
             'realsense_enable_color': LaunchConfiguration('realsense_enable_color'),
+            'realsense_depth_filters': LaunchConfiguration('realsense_depth_filters'),
         }.items(),
     )
 
@@ -147,13 +148,8 @@ def generate_launch_description():
         condition=_is_mode('navigation'),
         launch_arguments={
             'map': LaunchConfiguration('nav_map'),
-            'floor_z': LaunchConfiguration('floor_z'),
-            'base_floor_z': LaunchConfiguration('base_floor_z'),
-            'cloud_topic': LaunchConfiguration('cloud_topic'),
-            'sensor_frame': LaunchConfiguration('sensor_frame'),
             'use_realsense_obstacles': LaunchConfiguration('use_realsense_obstacles'),
-            'realsense_topic': LaunchConfiguration('realsense_topic'),
-            'robot_radius': LaunchConfiguration('robot_radius'),
+            'use_d435_mark_filter': LaunchConfiguration('use_d435_mark_filter'),
             'use_collision_monitor': LaunchConfiguration('use_collision_monitor'),
             'use_keepout': LaunchConfiguration('use_keepout'),
             # 运动桥只由 g1_navigation.launch.py 创建一次。
@@ -223,19 +219,20 @@ def generate_launch_description():
         DeclareLaunchArgument('floor_height', default_value=''),
         DeclareLaunchArgument('min_obstacle_height', default_value=''),
         DeclareLaunchArgument('max_obstacle_height', default_value=''),
-        DeclareLaunchArgument('floor_z', default_value='0.0'),
-        DeclareLaunchArgument('base_floor_z', default_value='0.0'),
-        DeclareLaunchArgument('cloud_topic', default_value='/lightning/registered_scan',
-                              description='Nav2 雷达障碍点云：Lightning 配准后的 map 系单帧点云（需 pub_registered_scan:=true）'),
-        DeclareLaunchArgument('sensor_frame', default_value='mid360_link'),
-        DeclareLaunchArgument(
-            'realsense_topic',
-            default_value='/camera/camera/depth/color/points'),
+        # floor_z / base_floor_z / cloud_topic / sensor_frame / realsense_topic / robot_radius
+        # 已于 2026-09-21 从导航链路移除：这些值直接写在 aid_navigation2/param/nav2_params.yaml
+        # （雷达障碍源固定为 /lightning/registered_scan，需 pub_registered_scan:=true）。
         DeclareLaunchArgument(
             'use_realsense_obstacles', default_value='true',
             choices=['true', 'false'],
-            description='将D435点云经STVL加入Nav2局部障碍层'),
-        DeclareLaunchArgument('robot_radius', default_value='0.40'),
+            description='将D435点云经STVL加入Nav2局部障碍层（话题/阈值见 nav2_params.yaml）'),
+        DeclareLaunchArgument(
+            'use_d435_mark_filter', default_value='true', choices=['true', 'false'],
+            description='D435 标记源吃 g1_nav_bridge/d435_mark_filter 输出（4 邻域剔除孤立飞点，'
+                        '参数见 g1_nav_bridge/config/d435_mark_filter.yaml）；false 改回原始点云'),
+        DeclareLaunchArgument(
+            'realsense_depth_filters', default_value='false', choices=['true', 'false'],
+            description='D435 驱动内 temporal 深度滤波（spatial 已默认开）；temporal 会用历史深度制造残影，默认关'),
         DeclareLaunchArgument(
             'use_collision_monitor', default_value='false', choices=['true', 'false'],
             description='仅 navigation 模式使用；完成独立验收前默认关闭'),

@@ -44,6 +44,8 @@ class ImuProcess {
     void SetGravityAlignInit(bool b) { gravity_align_init_ = b; }
 
     double GetMeanAccNorm() const { return mean_acc_.norm(); }
+    /// 初始化时推断的加计单位换算因子（g → m/s² 为 G_m_s2，已是 m/s² 为 1），IMU 初始化完成后有效
+    double GetAccScaleFactor() const { return acc_scale_factor_; }
 
     Eigen::Matrix<double, 12, 12> Q_;
     Vec3d cov_acc_;

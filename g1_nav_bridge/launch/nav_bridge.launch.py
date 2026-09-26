@@ -12,8 +12,8 @@ def generate_launch_description():
         get_package_share_directory('g1_nav_bridge'), 'config', 'nav_bridge.yaml')
     return LaunchDescription([
         DeclareLaunchArgument('cmd_vel_topic', default_value='/cmd_vel_safe'),
-        Node(package='g1_nav_bridge', executable='tf_to_current_pose',
-             name='g1_tf_to_current_pose', output='screen'),
+        # tf_to_current_pose 按 2026-09-22 决定不再启动（前端不需要它发的 PoseStamped）。
+        # 文件本身已补上 __main__ 守卫，需要时可手动 ros2 run 起来。
         Node(package='g1_nav_bridge', executable='sport_to_odom',
              name='g1_sport_to_odom', output='screen', parameters=[config]),
         Node(

@@ -157,7 +157,9 @@ void LaserMapping::ProcessIMU(const lightning::IMUPtr &imu) {
 
     if (p_imu_->IsIMUInited()) {
         /// 更新最新imu状态
-        kf_imu_.Predict(timestamp - last_timestamp_imu_, p_imu_->Q_, imu->angular_velocity, imu->linear_acceleration);
+        // 加计须与 LIO 分支（ImuProcess::UndistortPcl）用同一单位换算：MID360 输出单位是 g，而重力 grav_ 是 m/s²
+        kf_imu_.Predict(timestamp - last_timestamp_imu_, p_imu_->Q_, imu->angular_velocity,
+                        imu->linear_acceleration * p_imu_->GetAccScaleFactor());
 
         // LOG(INFO) << "newest wrt lidar: " << timestamp - kf_.GetX().timestamp_;
 
@@ -318,13 +320,19 @@ bool LaserMapping::Run() {
         // 遍历 imu_buffer_ 并覆盖 kf_imu_，须与 ProcessIMU()/GetIMUState() 互斥（见 SyncPackages）
         UL lock(mtx_buffer_);
         kf_imu_ = kf_;
-        if (!measures_.imu_.empty()) {
-            double t = measures_.imu_.back()->timestamp;
-            for (auto &imu : imu_buffer_) {
-                double dt = imu->timestamp - t;
-                kf_imu_.Predict(dt, p_imu_->Q_, imu->angular_velocity, imu->linear_acceleration);
-                t = imu->timestamp;
-            }
+        // kf_ 已被 UndistortPcl 递推到 lidar_end_time（末尾 [最后一条IMU, lidar_end_time] 那一段已积过），
+        // 重放须从 lidar_end_time 起算。原来从 measures_.imu_.back() 的时间起算：这一段（<1 个 IMU 周期）
+        // 被重复积分，且 kf_imu_ 时间戳（oplus 中 timestamp_ += dt）比 IMU 时间超前同样的量、每帧不同，
+        // DR/TF 时间戳因此比 IMU 超前最多一个周期并偶发倒退（PGO "当前DR定位的结果的时间戳应当比上一个..."）。
+        // 同时显式对齐时间戳（UndistortPcl 遇 abnormal dt 时会 SetTime 到断档处，kf_ 时间戳此后永久偏移），
+        // 并去掉 measures_.imu_ 为空时跳过重放的分支（那样 kf_imu_ 会漏掉缓冲里已到的 IMU）。
+        kf_imu_.SetTime(measures_.lidar_end_time_);
+        double t = measures_.lidar_end_time_;
+        for (auto &imu : imu_buffer_) {
+            double dt = imu->timestamp - t;
+            kf_imu_.Predict(dt, p_imu_->Q_, imu->angular_velocity,
+                            imu->linear_acceleration * p_imu_->GetAccScaleFactor());  // 单位同上
+            t = imu->timestamp;
         }
     }
 

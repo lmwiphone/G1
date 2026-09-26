@@ -13,6 +13,11 @@ find_package(ament_cmake_python REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
+find_package(tf2_ros REQUIRED)
+# 只用 libpcl（features/search），不依赖 pcl_ros；lightning-lm 已依赖 PCL，Thor 上现成
+find_package(PCL REQUIRED COMPONENTS common features search kdtree)
 find_package(unitree_api REQUIRED)
 find_package(unitree_hg REQUIRED)
 
@@ -40,7 +45,19 @@ ament_target_dependencies(battery_state_bridge
 
 ament_python_install_package(${PROJECT_NAME})
 
-install(TARGETS cmdvel_to_sport battery_state_bridge
+# D435 标记点云过滤（只给 STVL realsense_mark 用），算法在 include/g1_nav_bridge/d435_mark_filter.hpp
+add_executable(d435_mark_filter src/d435_mark_filter.cpp)
+target_include_directories(d435_mark_filter PRIVATE include ${PCL_INCLUDE_DIRS})
+target_link_libraries(d435_mark_filter ${PCL_LIBRARIES})
+ament_target_dependencies(d435_mark_filter
+  rclcpp sensor_msgs tf2 tf2_geometry_msgs tf2_ros)
+
+# MID360 近距剔除（STVL 没有 obstacle_min_range），算法在 include/g1_nav_bridge/scan_range_filter.hpp
+add_executable(scan_range_filter src/scan_range_filter.cpp)
+target_include_directories(scan_range_filter PRIVATE include)
+ament_target_dependencies(scan_range_filter rclcpp sensor_msgs tf2 tf2_ros)
+
+install(TARGETS cmdvel_to_sport battery_state_bridge d435_mark_filter scan_range_filter
   DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/
   DESTINATION include)
@@ -59,5 +76,15 @@ install(FILES third_party/unitree_ros2/LICENSE
   RENAME unitree_ros2-BSD-3-Clause.txt)
 
 ament_export_include_directories(include)
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_d435_mark_filter test/test_d435_mark_filter.cpp)
+  target_include_directories(test_d435_mark_filter PRIVATE include ${PCL_INCLUDE_DIRS})
+  target_link_libraries(test_d435_mark_filter ${PCL_LIBRARIES})
+  ament_add_gtest(test_scan_range_filter test/test_scan_range_filter.cpp)
+  target_include_directories(test_scan_range_filter PRIVATE include)
+  ament_target_dependencies(test_scan_range_filter sensor_msgs)
+endif()
 
 ament_package()
